@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: hl.exe
+            npm_pkg: hyperlite-win32-x64
+            npm_bin: hl.exe
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            binary: hl
+            npm_pkg: hyperlite-linux-x64
+            npm_bin: hl
+
+          - target: aarch64-apple-darwin
+            os: macos-14
+            binary: hl
+            npm_pkg: hyperlite-darwin-arm64
+            npm_bin: hl
+
+          - target: x86_64-apple-darwin
+            os: macos-13
+            binary: hl
+            npm_pkg: hyperlite-darwin-x64
+            npm_bin: hl
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Linux: install any native deps (alsa for audio-adjacent crates, etc.)
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} \
+             npm/${{ matrix.npm_pkg }}/${{ matrix.npm_bin }}
+          chmod +x npm/${{ matrix.npm_pkg }}/${{ matrix.npm_bin }}
+
+      - name: Stage binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "target\${{ matrix.target }}\release\${{ matrix.binary }}" `
+                    "npm\${{ matrix.npm_pkg }}\${{ matrix.npm_bin }}"
+
+      - name: Set package version
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          node -e "
+            const fs = require('fs');
+            const p = 'npm/${{ matrix.npm_pkg }}/package.json';
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            j.version = '$VERSION';
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+          "
+
+      - name: Publish platform package
+        working-directory: npm/${{ matrix.npm_pkg }}
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.npm_pkg }}
+          path: npm/${{ matrix.npm_pkg }}/${{ matrix.npm_bin }}
+
+  publish-main:
+    name: Publish main package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Set version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          node -e "
+            const fs = require('fs');
+            const p = 'npm/hyperlite/package.json';
+            const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+            j.version = '$VERSION';
+            Object.keys(j.optionalDependencies).forEach(k => {
+              j.optionalDependencies[k] = '$VERSION';
+            });
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+          "
+
+      - name: Publish main package
+        working-directory: npm/hyperlite
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

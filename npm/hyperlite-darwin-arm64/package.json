@@ -1,0 +1,9 @@
+{
+  "name": "@hyperlite/darwin-arm64",
+  "version": "0.1.0",
+  "description": "HyperLite binary for macOS Apple Silicon",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["hl"],
+  "license": "MIT"
+}

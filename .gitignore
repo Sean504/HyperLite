@@ -1,0 +1,12 @@
+/target
+Cargo.lock
+
+# npm binary artifacts — built by CI, never committed
+npm/hyperlite-win32-x64/hl.exe
+npm/hyperlite-linux-x64/hl
+npm/hyperlite-darwin-arm64/hl
+npm/hyperlite-darwin-x64/hl
+
+# local config / secrets
+.env
+*.db

@@ -1,0 +1,26 @@
+{
+  "name": "hyperlite",
+  "version": "0.1.0",
+  "description": "Terminal-native local LLM chat client — fast, offline, agentic",
+  "keywords": ["llm", "ollama", "tui", "terminal", "ai", "chat", "local", "offline"],
+  "homepage": "https://github.com/Sean504/HyperLite",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sean504/HyperLite.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "hl": "bin/run.js",
+    "hyperlite": "bin/run.js"
+  },
+  "files": ["bin/run.js"],
+  "optionalDependencies": {
+    "@hyperlite/win32-x64":    "0.1.0",
+    "@hyperlite/linux-x64":    "0.1.0",
+    "@hyperlite/darwin-arm64": "0.1.0",
+    "@hyperlite/darwin-x64":   "0.1.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

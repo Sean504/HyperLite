@@ -1,0 +1,9 @@
+{
+  "name": "@hyperlite/darwin-x64",
+  "version": "0.1.0",
+  "description": "HyperLite binary for macOS Intel",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": ["hl"],
+  "license": "MIT"
+}

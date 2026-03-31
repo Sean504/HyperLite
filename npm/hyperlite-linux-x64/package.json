@@ -1,0 +1,9 @@
+{
+  "name": "@hyperlite/linux-x64",
+  "version": "0.1.0",
+  "description": "HyperLite binary for Linux x64",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["hl"],
+  "license": "MIT"
+}
