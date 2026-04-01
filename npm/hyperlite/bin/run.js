@@ -9,7 +9,6 @@ const PLATFORM_PACKAGES = {
   'win32-x64':    { pkg: '@hyperlite-ai/win32-x64',    bin: 'hl.exe' },
   'linux-x64':    { pkg: '@hyperlite-ai/linux-x64',    bin: 'hl'     },
   'darwin-arm64': { pkg: '@hyperlite-ai/darwin-arm64', bin: 'hl'     },
-  'darwin-x64':   { pkg: '@hyperlite-ai/darwin-x64',   bin: 'hl'     },
 };
 
 function getPlatformKey() {

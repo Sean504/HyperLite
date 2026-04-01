@@ -17,8 +17,7 @@
   "optionalDependencies": {
     "@hyperlite-ai/win32-x64":    "0.1.0",
     "@hyperlite-ai/linux-x64":    "0.1.0",
-    "@hyperlite-ai/darwin-arm64": "0.1.0",
-    "@hyperlite-ai/darwin-x64":   "0.1.0"
+    "@hyperlite-ai/darwin-arm64": "0.1.0"
   },
   "engines": {
     "node": ">=16"

@@ -34,11 +34,6 @@ jobs:
             npm_pkg: hyperlite-darwin-arm64
             npm_bin: hl
 
-          - target: x86_64-apple-darwin
-            os: macos-13
-            binary: hl
-            npm_pkg: hyperlite-darwin-x64
-            npm_bin: hl
 
     steps:
       - uses: actions/checkout@v4
