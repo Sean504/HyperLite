@@ -225,27 +225,29 @@ enum SetupStep {
 }
 
 struct SetupState {
-    step:           SetupStep,
-    hardware:       HardwareInfo,
-    models:         Vec<RecommendedModel>,
-    selected:       Vec<bool>,
-    list_idx:       usize,
-    runtime_needed: bool,
-    download_queue: Vec<DownloadJob>,
-    current_dl:     Option<DownloadJob>,
-    dl_progress:    f64,
-    dl_log:         Vec<String>,
-    dl_done:        Vec<String>,
-    dl_failed:      Vec<String>,
-    dl_status_msg:  String,
-    dl_bytes_total: u64,
-    dl_bytes_done:  u64,
-    dl_speed_bps:   f64,
-    dl_start:       Option<Instant>,
-    dl_rx:          Option<tmpsc::UnboundedReceiver<DlEvent>>,
-    http_client:    reqwest::Client,
-    splash_tick:    u8,
-    error_msg:      Option<String>,
+    step:              SetupStep,
+    hardware:          HardwareInfo,
+    models:            Vec<RecommendedModel>,
+    selected:          Vec<bool>,
+    list_idx:          usize,
+    runtime_needed:    bool,
+    download_queue:    Vec<DownloadJob>,
+    current_dl:        Option<DownloadJob>,
+    dl_progress:       f64,
+    dl_log:            Vec<String>,
+    dl_done:           Vec<String>,
+    dl_failed:         Vec<String>,
+    dl_status_msg:     String,
+    dl_bytes_total:    u64,
+    dl_bytes_done:     u64,
+    dl_speed_bps:      f64,
+    dl_start:          Option<Instant>,
+    dl_rx:             Option<tmpsc::UnboundedReceiver<DlEvent>>,
+    dl_total_queued:   usize,   // set once when downloads begin, for overall progress
+    dl_complete_ticks: u8,      // counts up after all downloads done before returning
+    http_client:       reqwest::Client,
+    splash_tick:       u8,
+    error_msg:         Option<String>,
 }
 
 impl SetupState {
@@ -288,6 +290,8 @@ impl SetupState {
             dl_speed_bps: 0.0,
             dl_start: None,
             dl_rx: None,
+            dl_total_queued: 0,
+            dl_complete_ticks: 0,
             http_client,
             splash_tick: 0,
             error_msg: None,
@@ -322,6 +326,9 @@ pub async fn run_startup(
     let mut state = SetupState::new(hardware, http_client);
 
     loop {
+        // Exit BEFORE drawing so we never show a blank frame
+        if state.step == SetupStep::Done { return Ok(()); }
+
         terminal.draw(|f| render(f, &mut state))?;
         state.splash_tick = state.splash_tick.wrapping_add(1);
 
@@ -353,12 +360,25 @@ pub async fn run_startup(
 
         // ── Drive downloads ────────────────────────────────────────────────────
         if state.step == SetupStep::Downloading {
+            // Record total files at start for the overall progress bar
+            let in_flight = state.dl_done.len() + state.dl_failed.len()
+                + state.current_dl.is_some() as usize + state.download_queue.len();
+            if state.dl_total_queued == 0 && in_flight > 0 {
+                state.dl_total_queued = in_flight;
+            }
+
             if state.current_dl.is_none() && !state.download_queue.is_empty() {
                 start_next_download(&mut state);
             }
             poll_download_progress(&mut state);
+
+            // Show completion screen for ~1.5s before exiting
             if state.download_queue.is_empty() && state.current_dl.is_none() {
-                state.step = SetupStep::Done;
+                if state.dl_complete_ticks >= 20 {
+                    state.step = SetupStep::Done;
+                } else {
+                    state.dl_complete_ticks += 1;
+                }
             }
         }
 
@@ -591,7 +611,7 @@ fn render(f: &mut ratatui::Frame, state: &mut SetupState) {
         SetupStep::Splash      => render_splash(f, area, state),
         SetupStep::SetupModels => render_model_select(f, area, state),
         SetupStep::Downloading => render_downloading(f, area, state),
-        SetupStep::Done        => {}
+        SetupStep::Done        => render_launching(f, area),
     }
 }
 
@@ -871,57 +891,98 @@ fn render_downloading(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
     let purple = ratatui::style::Color::Rgb(189, 147, 249);
     let teal   = ratatui::style::Color::Rgb(0,   245, 212);
     let green  = ratatui::style::Color::Rgb(80,  250, 123);
+    let orange = ratatui::style::Color::Rgb(255, 184, 108);
     let muted  = ratatui::style::Color::Rgb(90,  90, 138);
     let dim    = ratatui::style::Color::Rgb(55,  55,  90);
     let white  = ratatui::style::Color::Rgb(224, 223, 255);
     let red    = ratatui::style::Color::Rgb(255,  85,  85);
     let bg     = ratatui::style::Color::Rgb(16,  16,  30);
 
+    let all_done   = state.current_dl.is_none() && state.download_queue.is_empty();
+    let total      = state.dl_total_queued;
+    let finished   = state.dl_done.len() + state.dl_failed.len();
+
+    let title_text = if all_done {
+        " ✓  Setup Complete ".to_string()
+    } else {
+        format!(" Downloading  {}/{}  ", finished + 1, total.max(1))
+    };
+    let title_col = if all_done { green } else { purple };
+
     let panel = centered_rect(72, 26, area);
     f.render_widget(Clear, panel);
 
-    let total_queued = state.dl_done.len() + state.dl_failed.len()
-        + state.current_dl.is_some() as usize + state.download_queue.len();
-    let finished = state.dl_done.len() + state.dl_failed.len();
-
-    let title = if state.current_dl.is_some() {
-        format!(" Downloading  {}/{} ", finished + 1, total_queued)
-    } else {
-        " Downloads Complete ".to_string()
-    };
-
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(purple))
-        .title(Line::from(vec![Span::styled(title, Style::default().fg(purple).add_modifier(Modifier::BOLD))]))
+        .border_style(Style::default().fg(title_col))
+        .title(Line::from(vec![Span::styled(title_text, Style::default().fg(title_col).add_modifier(Modifier::BOLD))]))
         .style(Style::default().bg(bg));
     let inner = block.inner(panel);
     f.render_widget(block, panel);
 
+    // Layout:  overall-bar | current-name | file-bar | size/speed/eta | queue | log | hint
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(1), // 0: overall progress bar
+            Constraint::Length(1), // 1: current file name + spinner
+            Constraint::Length(1), // 2: current file progress bar
+            Constraint::Length(1), // 3: size / speed / ETA
+            Constraint::Length(1), // 4: queue / completion message
+            Constraint::Min(1),    // 5: log
+            Constraint::Length(1), // 6: hint
         ])
         .split(inner);
 
-    if let Some(ref job) = state.current_dl {
-        let pct     = (state.dl_progress * 100.0).min(100.0) as u64;
-        let spinner = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"][(state.splash_tick as usize / 2) % 10];
+    // ── Overall progress bar ─────────────────────────────────────────────────
+    if total > 0 {
+        let overall_done = if all_done { total } else { finished };
+        let frac  = overall_done as f64 / total as f64;
+        let bar_w = chunks[0].width.saturating_sub(12) as usize;
+        let fill  = (bar_w as f64 * frac).round() as usize;
+        let empty = bar_w.saturating_sub(fill);
+        let bar   = format!("  [{}{:>fill$}{}] {}/{}",
+            "█".repeat(fill), "", "░".repeat(empty), overall_done, total,
+            fill = 0);
+        // Simpler format
+        let bar = format!("  [{}{}] {}/{}  files",
+            "█".repeat(fill), "░".repeat(empty), overall_done, total);
+        f.render_widget(Paragraph::new(Line::from(vec![
+            Span::styled(bar, Style::default().fg(if all_done { green } else { muted })),
+        ])), chunks[0]);
+    }
 
+    if all_done {
+        // ── Completion state ─────────────────────────────────────────────────
+        let spinner = ["◐","◓","◑","◒"][(state.splash_tick as usize / 3) % 4];
         f.render_widget(Paragraph::new(Line::from(vec![
             Span::styled(format!("  {} ", spinner), Style::default().fg(teal)),
-            Span::styled(job.name.clone(), Style::default().fg(white).add_modifier(Modifier::BOLD)),
+            Span::styled("All downloads complete — launching HyperLite…", Style::default().fg(white).add_modifier(Modifier::BOLD)),
+        ])), chunks[1]);
+
+        f.render_widget(Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!("  {} model{} downloaded{}",
+                    state.dl_done.len(),
+                    if state.dl_done.len() == 1 { "" } else { "s" },
+                    if state.dl_failed.is_empty() { "" } else { "  (some failed — check log)" }),
+                Style::default().fg(if state.dl_failed.is_empty() { green } else { orange }),
+            ),
+        ])), chunks[2]);
+
+    } else if let Some(ref job) = state.current_dl {
+        // ── Active download ──────────────────────────────────────────────────
+        let spinner  = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"][(state.splash_tick as usize / 2) % 10];
+        let type_tag = if job.is_runtime { "[runtime]" } else { "[model]  " };
+        f.render_widget(Paragraph::new(Line::from(vec![
+            Span::styled(format!("  {} ", spinner), Style::default().fg(teal)),
+            Span::styled(type_tag, Style::default().fg(dim)),
+            Span::styled(format!("  {}", job.name), Style::default().fg(white).add_modifier(Modifier::BOLD)),
             Span::styled("  —  ", Style::default().fg(dim)),
             Span::styled(state.dl_status_msg.clone(), Style::default().fg(muted)),
-        ])), chunks[0]);
+        ])), chunks[1]);
 
+        let pct    = (state.dl_progress * 100.0).min(100.0) as u64;
         let bar_w  = chunks[2].width.saturating_sub(10) as usize;
         let filled = (bar_w as f64 * state.dl_progress).round() as usize;
         let empty  = bar_w.saturating_sub(filled);
@@ -946,30 +1007,30 @@ fn render_downloading(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
             let secs = remaining as f64 / state.dl_speed_bps;
             if secs < 60.0 { format!("{}s", secs as u64) }
             else { format!("{}m {}s", secs as u64 / 60, secs as u64 % 60) }
-        } else { "calculating…".to_string() };
+        } else { "—".to_string() };
 
         let size_info = if state.dl_bytes_total > 0 {
             format!("  {} / {}    {}    ETA {}",
                 fmt_bytes(state.dl_bytes_done), fmt_bytes(state.dl_bytes_total),
                 speed_str, eta_str)
         } else {
-            format!("  {}    {}", speed_str, state.dl_status_msg)
+            format!("  connecting…    {}", state.dl_status_msg)
         };
         f.render_widget(Paragraph::new(Line::from(vec![
             Span::styled(size_info, Style::default().fg(muted)),
         ])), chunks[3]);
 
-    } else if state.dl_done.is_empty() && state.dl_failed.is_empty() {
-        f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled("  Preparing download…", Style::default().fg(muted)),
-        ])), chunks[0]);
     } else {
+        // ── Preparing first download ─────────────────────────────────────────
+        let spinner = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"][(state.splash_tick as usize / 2) % 10];
         f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled("  ✓  All downloads complete!", Style::default().fg(green).add_modifier(Modifier::BOLD)),
-        ])), chunks[0]);
+            Span::styled(format!("  {} ", spinner), Style::default().fg(teal)),
+            Span::styled("Preparing downloads…", Style::default().fg(muted)),
+        ])), chunks[1]);
     }
 
-    if !state.download_queue.is_empty() {
+    // ── Queue ────────────────────────────────────────────────────────────────
+    if !state.download_queue.is_empty() && !all_done {
         let queued: String = state.download_queue.iter()
             .map(|j| j.name.as_str())
             .collect::<Vec<_>>().join("  ·  ");
@@ -979,6 +1040,7 @@ fn render_downloading(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
         ])), chunks[4]);
     }
 
+    // ── Log ──────────────────────────────────────────────────────────────────
     let log_start  = state.dl_log.len().saturating_sub(chunks[5].height as usize);
     let log_lines: Vec<Line<'static>> = state.dl_log[log_start..].iter().map(|l| {
         let color = if l.contains('✓') { green }
@@ -989,14 +1051,29 @@ fn render_downloading(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
     }).collect();
     f.render_widget(Paragraph::new(log_lines), chunks[5]);
 
-    let hint = if !state.dl_done.is_empty() || !state.dl_failed.is_empty() {
-        "  Esc / s → skip remaining and launch"
+    // ── Hint ─────────────────────────────────────────────────────────────────
+    let hint = if all_done {
+        "  launching automatically…"
+    } else if !state.dl_done.is_empty() || !state.dl_failed.is_empty() {
+        "  Esc / s → skip remaining downloads and launch"
     } else {
-        "  downloading from HuggingFace — please wait…"
+        "  downloading — please wait…"
     };
     f.render_widget(Paragraph::new(Line::from(vec![
         Span::styled(hint, Style::default().fg(dim)),
     ])), chunks[6]);
+}
+
+fn render_launching(f: &mut ratatui::Frame, area: Rect) {
+    let teal = ratatui::style::Color::Rgb(0, 245, 212);
+    let bg   = ratatui::style::Color::Rgb(8, 8, 18);
+    f.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Launching HyperLite…", Style::default().fg(teal)),
+        ])),
+        area,
+    );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
