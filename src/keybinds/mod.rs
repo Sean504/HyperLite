@@ -126,8 +126,9 @@ impl Keybinds {
         k.bind(KeyCombo::new(Char('d'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
                                                            Action::PopDraft,         "Ctrl+Shift+D");
 
-        // App
-        k.bind(KeyCombo::ctrl(Char('q')),                  Action::Quit,             "Ctrl+Q");
+        // App — Ctrl+X is the primary quit (Ctrl+Q may be eaten by some terminals)
+        k.bind(KeyCombo::ctrl(Char('x')),                  Action::Quit,             "Ctrl+X");
+        k.bind(KeyCombo::ctrl(Char('q')),                  Action::Quit,             "Ctrl+X");
         k.bind(KeyCombo::ctrl(Char('e')),                  Action::ExternalEditor,   "Ctrl+E");
         k.bind(KeyCombo::new(Char('t'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
                                                            Action::ThemeCycleNext,   "Ctrl+Shift+T");

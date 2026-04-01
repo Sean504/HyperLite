@@ -484,7 +484,10 @@ async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::R
 async fn dispatch_action(app: &mut App, action: Action) -> anyhow::Result<bool> {
     use Action::*;
     match action {
-        Quit => return Ok(true),
+        Quit => {
+            let _ = crate::config::save(&app.config);
+            return Ok(true);
+        }
 
         Submit => {
             if !app.is_streaming() {
@@ -952,6 +955,7 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
             if let Some(name) = names.get(app.dialog_selected_idx) {
                 app.theme = crate::ui::theme::get(name);
                 app.config.theme = name.to_string();
+                let _ = crate::config::save(&app.config);
             }
             close_dialog(app);
         }
@@ -1826,74 +1830,103 @@ fn copy_last_message(app: &mut App) {
 /// Download a GGUF model file directly from HuggingFace to ~/.hyperlite/models/.
 /// Progress events arrive via `app.event_tx` as `Event::ModelDownload*`.
 fn start_model_download(app: &mut App, filename: String, url: String, display: String) {
+    let models_dir = crate::startup::models_dir();
+    let tmp        = models_dir.join(format!("{}.part", &filename));
+
+    // How many bytes are already on disk from a previous interrupted download
+    let partial_bytes = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+
     app.model_dl_active      = Some(filename.clone());
-    app.model_dl_bytes_done  = 0;
+    app.model_dl_bytes_done  = partial_bytes;   // start progress bar where we left off
     app.model_dl_bytes_total = 0;
     app.model_dl_speed_bps   = 0.0;
 
-    let client = app.http_client.clone();
-    let tx     = app.event_tx.clone();
+    // Use a separate client with no timeout — large model downloads can take hours.
+    // The shared http_client has a 120-second timeout which would kill mid-download.
+    let client = match reqwest::Client::builder()
+        // No request timeout — large model downloads can take hours.
+        // connect_timeout only limits the initial TCP handshake.
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            app.push_toast(crate::ui::components::toast::Toast::error(format!("Download client error: {}", e)));
+            return;
+        }
+    };
+    let tx = app.event_tx.clone();
 
     tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
         use futures::StreamExt;
 
-        // Ensure the models directory exists
-        let models_dir = match dirs::home_dir() {
-            Some(h) => h.join(".hyperlite").join("models"),
-            None => {
-                let _ = tx.send(Event::ModelDownloadFailed {
-                    model: display, error: "Could not determine home directory".to_string()
-                });
-                return;
-            }
-        };
         if let Err(e) = tokio::fs::create_dir_all(&models_dir).await {
             let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
             return;
         }
 
         let dest = models_dir.join(&filename);
-        let tmp  = models_dir.join(format!("{}.part", filename));
 
-        // Stream the download
-        let resp = match client.get(&url).send().await {
-            Ok(r) if r.status().is_success() => r,
-            Ok(r) => {
-                let _ = tx.send(Event::ModelDownloadFailed {
-                    model: display, error: format!("HTTP {}", r.status())
-                });
-                return;
-            }
+        // Send Range header when resuming so we don't re-download what we have
+        let mut req = client.get(&url);
+        if partial_bytes > 0 {
+            req = req.header("Range", format!("bytes={}-", partial_bytes));
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
             Err(e) => {
                 let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
                 return;
             }
         };
 
-        let total = resp.content_length().unwrap_or(0);
-        let mut file = match tokio::fs::File::create(&tmp).await {
-            Ok(f) => f,
-            Err(e) => {
-                let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
-                return;
+        let status = resp.status();
+        if !status.is_success() {
+            let _ = tx.send(Event::ModelDownloadFailed {
+                model: display, error: format!("HTTP {}", status)
+            });
+            return;
+        }
+
+        // 206 Partial Content = server honoured Range; 200 = no range support, full restart
+        let resuming      = status.as_u16() == 206 && partial_bytes > 0;
+        let content_len   = resp.content_length().unwrap_or(0);
+        let total         = if resuming { partial_bytes + content_len } else { content_len };
+
+        // Open file in append mode when resuming, fresh create otherwise
+        let mut file = if resuming {
+            match tokio::fs::OpenOptions::new().append(true).open(&tmp).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
+                    return;
+                }
+            }
+        } else {
+            match tokio::fs::File::create(&tmp).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
+                    return;
+                }
             }
         };
 
         let mut stream = resp.bytes_stream();
-        let mut done   = 0u64;
+        let mut done   = if resuming { partial_bytes } else { 0u64 };
 
         while let Some(chunk) = stream.next().await {
             let chunk = match chunk {
                 Ok(c)  => c,
                 Err(e) => {
-                    let _ = tokio::fs::remove_file(&tmp).await;
+                    // Keep .part file intact — next attempt will resume from here
                     let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
                     return;
                 }
             };
             if let Err(e) = file.write_all(&chunk).await {
-                let _ = tokio::fs::remove_file(&tmp).await;
                 let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
                 return;
             }
@@ -1904,7 +1937,6 @@ fn start_model_download(app: &mut App, filename: String, url: String, display: S
         }
 
         drop(file);
-        // Atomically move .part → final file
         if let Err(e) = tokio::fs::rename(&tmp, &dest).await {
             let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
             return;
@@ -1932,6 +1964,7 @@ fn cycle_theme(app: &mut App, dir: i64) {
     let name = names[nxt];
     app.theme = crate::ui::theme::get(name);
     app.config.theme = name.to_string();
+    let _ = crate::config::save(&app.config);
     app.push_toast(crate::ui::components::toast::Toast::info(format!("Theme: {}", name)));
 }
 

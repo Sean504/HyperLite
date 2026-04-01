@@ -735,6 +735,120 @@ pub static NIGHTOWL: Theme = Theme {
     ],
 };
 
+// ── KAWAII ────────────────────────────────────────────────────────────────────
+// Pastel pink, soft lavender, bubblegum — cute & high contrast
+
+pub static KAWAII: Theme = Theme {
+    name: "kawaii",
+    bg:         rgb(255, 240, 248),  // warm cream-pink
+    bg_panel:   rgb(255, 228, 241),  // cotton candy
+    bg_element: rgb(255, 210, 230),  // slightly deeper pink
+    bg_menu:    rgb(255, 235, 245),
+    text:       rgb(80,  40,  80),   // deep plum — readable on light
+    text_muted: rgb(180, 100, 160),
+    text_dim:   rgb(210, 150, 190),
+    primary:    rgb(255, 100, 180),  // hot pink
+    secondary:  rgb(200, 120, 220),  // orchid
+    accent:     rgb(140, 80,  220),  // violet
+    success:    rgb(100, 200, 130),  // mint
+    error:      rgb(240, 60,  100),
+    warning:    rgb(255, 160, 60),
+    border:     rgb(240, 180, 220),
+    border_hi:  rgb(255, 100, 180),
+    diff_add_bg:  rgb(200, 255, 220),
+    diff_del_bg:  rgb(255, 200, 210),
+    diff_ctx_bg:  rgb(255, 228, 241),
+    diff_add_fg:  rgb(40,  140, 80),
+    diff_del_fg:  rgb(200, 40,  80),
+    diff_ln_fg:   rgb(180, 100, 160),
+    agents: [
+        rgb(255, 100, 180),
+        rgb(140, 80,  220),
+        rgb(100, 200, 130),
+        rgb(240, 60,  100),
+        rgb(255, 160, 60),
+        rgb(200, 120, 220),
+        rgb(80,  180, 255),
+        rgb(255, 200, 80),
+    ],
+};
+
+// ── GOTH ──────────────────────────────────────────────────────────────────────
+// Near-black backgrounds, blood red accents, bone-white text
+
+pub static GOTH: Theme = Theme {
+    name: "goth",
+    bg:         rgb(8,   4,   10),   // near-void black
+    bg_panel:   rgb(18,  10,  22),
+    bg_element: rgb(32,  18,  38),
+    bg_menu:    rgb(12,  6,   15),
+    text:       rgb(225, 215, 225),  // bone white
+    text_muted: rgb(130, 90,  130),  // dusty mauve
+    text_dim:   rgb(70,  45,  70),
+    primary:    rgb(180, 20,  40),   // blood red
+    secondary:  rgb(120, 40,  100),  // deep burgundy
+    accent:     rgb(200, 60,  80),   // crimson
+    success:    rgb(80,  160, 80),   // sickly green
+    error:      rgb(220, 30,  60),
+    warning:    rgb(180, 120, 40),   // tarnished gold
+    border:     rgb(60,  25,  55),
+    border_hi:  rgb(180, 20,  40),
+    diff_add_bg:  rgb(15,  40,  15),
+    diff_del_bg:  rgb(50,  10,  15),
+    diff_ctx_bg:  rgb(18,  10,  22),
+    diff_add_fg:  rgb(80,  160, 80),
+    diff_del_fg:  rgb(220, 30,  60),
+    diff_ln_fg:   rgb(130, 90,  130),
+    agents: [
+        rgb(180, 20,  40),
+        rgb(200, 60,  80),
+        rgb(80,  160, 80),
+        rgb(150, 80,  200),
+        rgb(180, 120, 40),
+        rgb(100, 150, 200),
+        rgb(130, 90,  130),
+        rgb(220, 140, 60),
+    ],
+};
+
+// ── SEPIA ─────────────────────────────────────────────────────────────────────
+// Warm parchment tones — aged paper feel
+
+pub static SEPIA: Theme = Theme {
+    name: "sepia",
+    bg:         rgb(30,  22,  12),   // dark espresso
+    bg_panel:   rgb(42,  30,  18),
+    bg_element: rgb(60,  44,  26),
+    bg_menu:    rgb(24,  17,  9),
+    text:       rgb(220, 200, 165),  // warm parchment
+    text_muted: rgb(150, 120, 80),   // faded ink
+    text_dim:   rgb(100, 78,  50),
+    primary:    rgb(200, 150, 80),   // aged gold
+    secondary:  rgb(160, 110, 60),
+    accent:     rgb(220, 170, 90),   // warm amber
+    success:    rgb(130, 170, 90),   // olive green
+    error:      rgb(190, 70,  50),   // rust red
+    warning:    rgb(210, 155, 60),
+    border:     rgb(80,  58,  34),
+    border_hi:  rgb(200, 150, 80),
+    diff_add_bg:  rgb(25,  45,  18),
+    diff_del_bg:  rgb(55,  22,  14),
+    diff_ctx_bg:  rgb(42,  30,  18),
+    diff_add_fg:  rgb(130, 170, 90),
+    diff_del_fg:  rgb(190, 70,  50),
+    diff_ln_fg:   rgb(150, 120, 80),
+    agents: [
+        rgb(200, 150, 80),
+        rgb(220, 170, 90),
+        rgb(130, 170, 90),
+        rgb(190, 70,  50),
+        rgb(160, 130, 200),
+        rgb(100, 160, 180),
+        rgb(150, 120, 80),
+        rgb(210, 130, 70),
+    ],
+};
+
 // ── Theme registry ────────────────────────────────────────────────────────────
 
 static THEMES: Lazy<HashMap<&'static str, &'static Theme>> = Lazy::new(|| {
@@ -757,6 +871,9 @@ static THEMES: Lazy<HashMap<&'static str, &'static Theme>> = Lazy::new(|| {
     m.insert("aura",        &AURA);
     m.insert("palenight",   &PALENIGHT);
     m.insert("nightowl",    &NIGHTOWL);
+    m.insert("kawaii",      &KAWAII);
+    m.insert("goth",        &GOTH);
+    m.insert("sepia",       &SEPIA);
     m
 });
 

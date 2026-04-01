@@ -42,7 +42,7 @@ pub const DOWNLOADABLE: &[DownloadEntry] = &[
 ];
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let dialog = centered_rect(70, 28, area);
+    let dialog = centered_rect(84, 28, area);
     frame.render_widget(Clear, dialog);
 
     let block = Block::default()
@@ -77,7 +77,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(tabs, chunks[0]);
 
     if app.model_picker_tab == 3 {
-        render_download_tab(frame, &chunks, app);
+        render_download_tab(frame, &chunks, app, dialog.width);
         return;
     }
 
@@ -132,7 +132,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(hint, chunks[4]);
 }
 
-fn render_download_tab(frame: &mut Frame, chunks: &[Rect], app: &mut App) {
+fn render_download_tab(frame: &mut Frame, chunks: &[Rect], app: &mut App, dialog_width: u16) {
     let teal   = ratatui::style::Color::Rgb(0,   245, 212);
     let green  = ratatui::style::Color::Rgb(80,  250, 123);
     let orange = ratatui::style::Color::Rgb(255, 184, 108);
@@ -199,6 +199,10 @@ fn render_download_tab(frame: &mut Frame, chunks: &[Rect], app: &mut App) {
         .filter(|e| q.is_empty() || e.display.to_lowercase().contains(&q))
         .collect();
 
+    // inner_w = dialog_width - 2 borders; highlight_symbol "► " = 2 extra; usable = inner_w - 2
+    // marker(2) + name(20) + " " + size("xx.x GB"=7) + "  " = 32 fixed
+    let desc_max = dialog_width.saturating_sub(2 + 2 + 2 + 20 + 1 + 7 + 2) as usize;
+
     let items: Vec<ListItem> = entries.iter().map(|e| {
         let installed = models_dir.join(e.hf_file).exists();
         let downloading = app.model_dl_active.as_deref() == Some(e.hf_file);
@@ -209,8 +213,9 @@ fn render_download_tab(frame: &mut Frame, chunks: &[Rect], app: &mut App) {
         } else {
             ("  ", app.theme.text)
         };
-        let label = format!("{}{:<28} {:>5} GB  {}", marker, e.display, e.size_gb, e.desc);
-        ListItem::new(truncate(&label, 72)).style(Style::default().fg(color))
+        let size_str = format!("{:.1} GB", e.size_gb);
+        let label = format!("{}{:<20} {:>7}  {}", marker, e.display, size_str, truncate(e.desc, desc_max));
+        ListItem::new(label).style(Style::default().fg(color))
     }).collect();
 
     let mut list_state = ListState::default();

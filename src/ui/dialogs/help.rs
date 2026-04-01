@@ -9,7 +9,7 @@ use crate::app::App;
 use super::centered_rect;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let dialog = centered_rect(64, 32, area);
+    let dialog = centered_rect(80, 36, area);
     frame.render_widget(Clear, dialog);
 
     let block = Block::default()

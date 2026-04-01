@@ -51,7 +51,7 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
         // ── Options ───────────────────────────────────────────────────────────
         3 => vec![
             Command { label: "Help",  desc: "Show keybinding reference", shortcut: "?" },
-            Command { label: "Quit",  desc: "Exit HyperLite",            shortcut: "Ctrl+Q" },
+            Command { label: "Quit",  desc: "Exit HyperLite",            shortcut: "Ctrl+X" },
         ],
         _ => vec![],
     }
@@ -63,7 +63,7 @@ pub fn all_commands() -> Vec<Command> {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let dialog = centered_rect(62, 24, area);
+    let dialog = centered_rect(92, 28, area);
     frame.render_widget(Clear, dialog);
 
     let block = Block::default()
@@ -130,14 +130,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         c.desc.to_lowercase().contains(&query.to_lowercase())
     }).collect();
 
+    // Layout: highlight(2) + indent(2) + label(22) + desc(fills) + shortcut(14)
+    // highlight_symbol "► " takes 2 chars that must be subtracted from usable width
+    let inner_w      = dialog.width.saturating_sub(2) as usize; // strip borders
+    let label_col    = 22usize;
+    let shortcut_col = 14usize; // "  " + up to 12-char shortcut
+    let highlight    = 2usize;  // "► " prefix on selected row (spaces on others)
+    let desc_max     = inner_w.saturating_sub(highlight + 2 + label_col + shortcut_col);
+
     let items: Vec<ListItem> = filtered.iter().map(|c| {
-        let label_width = 28usize;
+        let desc_text = if c.desc.len() > desc_max {
+            format!("{}…", &c.desc[..desc_max.saturating_sub(1)])
+        } else {
+            c.desc.to_string()
+        };
         ListItem::new(Line::from(vec![
             Span::styled(
-                format!("  {:<label_width$}", c.label),
+                format!("  {:<label_col$}", c.label),
                 Style::default().fg(app.theme.text).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(c.desc, Style::default().fg(app.theme.text_muted)),
+            Span::styled(desc_text, Style::default().fg(app.theme.text_muted)),
             Span::styled(
                 format!("  {}", c.shortcut),
                 Style::default().fg(app.theme.text_dim),

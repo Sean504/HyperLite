@@ -11,7 +11,7 @@ use crate::tools::BUILTIN_AGENTS;
 use super::centered_rect;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let dialog = centered_rect(56, 22, area);
+    let dialog = centered_rect(72, 22, area);
     frame.render_widget(Clear, dialog);
 
     let block = Block::default()
@@ -25,6 +25,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(dialog);
     frame.render_widget(block, dialog);
 
+    // inner width = dialog(72) - 2 borders = 70; "● Name  — " prefix uses ~14 chars
+    let inner_w  = dialog.width.saturating_sub(2) as usize;
+    let desc_max = inner_w.saturating_sub(14);
+
+    let truncate_desc = |s: &str| -> String {
+        if s.len() > desc_max {
+            format!("{}…", &s[..desc_max.saturating_sub(1)])
+        } else {
+            s.to_string()
+        }
+    };
+
     let mut items: Vec<ListItem> = Vec::new();
 
     for agent in BUILTIN_AGENTS {
@@ -37,7 +49,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         };
         items.push(ListItem::new(Line::from(vec![
             Span::styled(format!("{}{}", marker, agent.name), name_style),
-            Span::styled(format!("  — {}", agent.description), Style::default().fg(app.theme.text_muted)),
+            Span::styled(format!("  — {}", truncate_desc(agent.description)), Style::default().fg(app.theme.text_muted)),
         ])));
     }
 
@@ -52,7 +64,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         let desc = agent.description.as_deref().unwrap_or("Custom agent");
         items.push(ListItem::new(Line::from(vec![
             Span::styled(format!("{}{}", marker, agent.name), name_style),
-            Span::styled(format!("  — {}", desc), Style::default().fg(app.theme.text_muted)),
+            Span::styled(format!("  — {}", truncate_desc(desc)), Style::default().fg(app.theme.text_muted)),
         ])));
     }
 

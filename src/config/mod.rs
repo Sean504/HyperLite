@@ -59,6 +59,17 @@ pub fn load(project_dir: Option<&str>) -> Result<Config> {
     Ok(config)
 }
 
+/// Persist the current config to the global settings file.
+/// Only writes fields that differ from defaults (theme, model, provider, agent).
+pub fn save(config: &Config) -> Result<()> {
+    let dir = config_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("settings.toml");
+    let raw = toml::to_string_pretty(config)?;
+    std::fs::write(&path, raw)?;
+    Ok(())
+}
+
 fn merge_into(base: &mut Config, overlay: Config) {
     if !overlay.theme.is_empty()    { base.theme    = overlay.theme; }
     if !overlay.model.is_empty()    { base.model    = overlay.model; }

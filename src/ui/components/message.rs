@@ -161,11 +161,21 @@ fn extract_tag<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
 }
 
 fn render_assistant(msg: &Message, theme: &Theme, width: u16, show_tool_details: bool, lines: &mut Vec<Line<'static>>) {
-    let model = msg.model.as_deref().unwrap_or("assistant");
-    let ts    = fmt_ts(msg.created_at);
+    let raw_model = msg.model.as_deref().unwrap_or("assistant");
+    // If the stored model id is a file path, show only a pretty stem instead
+    let model = if raw_model.contains('/') || raw_model.contains('\\') {
+        std::path::Path::new(raw_model)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| crate::providers::openai_compat::pretty_name(s))
+            .unwrap_or_else(|| raw_model.to_string())
+    } else {
+        raw_model.to_string()
+    };
+    let ts = fmt_ts(msg.created_at);
     lines.push(Line::from(vec![
         Span::styled(" ", Style::default().fg(theme.primary)),
-        Span::styled(model.to_string(), Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(model, Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
         Span::styled(format!("  {}", ts), Style::default().fg(theme.text_dim)),
     ]));
 

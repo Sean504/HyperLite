@@ -146,7 +146,15 @@ pub async fn stream_chat(
         .map(|m| OaiMessage { role: m.role.clone(), content: m.content.clone() })
         .collect();
 
-    let tools = build_oai_tools();
+    // DirectGguf (llamafile/llama-server) gets tool definitions via the system
+    // prompt in XML format.  Sending the OpenAI `tools` array additionally causes
+    // llama.cpp to inject its own jinja-template tool format on top, producing
+    // two conflicting instruction sets that confuse smaller local models.
+    let tools = if backend == BackendKind::DirectGguf {
+        vec![]
+    } else {
+        build_oai_tools()
+    };
 
     let body = ChatRequest {
         model,
