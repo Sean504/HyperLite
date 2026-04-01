@@ -20,8 +20,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let session_h  = (inner.height / 4).max(4).min(12);
     // Bottom fixed sections
     let folder_h   = 3_u16;
-    let model_h    = 8_u16;
-    let hardware_h = 7_u16;
+    let model_h    = 5_u16;
+    let hardware_h = 5_u16;
     let bottom_h   = folder_h + model_h + hardware_h;
     // Plan panel gets everything in between
     let plan_h = inner.height
