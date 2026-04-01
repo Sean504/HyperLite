@@ -1,6 +1,6 @@
 [package]
 name = "hyperlite"
-version = "0.1.8"
+version = "0.1.10"
 edition = "2021"
 description = "Hyper-fast local-first TUI for offline LLM inference"
 
