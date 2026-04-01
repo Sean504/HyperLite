@@ -346,19 +346,25 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                 if !tool_calls.is_empty() {
                     app.pending_tool_calls = tool_calls;
                 } else {
-                    // Fix 1 — Tool enforcer: model described an action but issued no tool calls.
-                    // Detect passive "I'll/I will/Let me" responses to action requests and re-prompt.
+                    // Tool enforcer: fire when model stopped without calling tools but should continue.
+                    //
+                    // Case A: active plan has remaining steps — must continue regardless.
+                    let plan_has_more = !app.active_plan.is_empty()
+                        && app.plan_step < app.active_plan.len();
+
+                    // Case B: model described an action passively without calling a tool.
                     let has_passive = ["I'll ", "I will ", "I can ", "Let me ", "I would ", "Here's "]
                         .iter().any(|p| normalized.contains(p));
                     let last_user_text = app.messages.iter().rev()
-                        .skip(1) // skip the assistant message we just pushed
+                        .skip(1)
                         .find(|m| m.role == Role::User && !m.text_content().starts_with("<tool_result>"))
                         .map(|m| m.text_content())
                         .unwrap_or_default();
                     let has_action = ["write", "create", "make", "edit", "fix", "build",
                                       "add", "implement", "delete", "remove", "update"]
                         .iter().any(|k| last_user_text.to_lowercase().contains(k));
-                    if has_passive && has_action {
+
+                    if plan_has_more || (has_passive && has_action) {
                         app.tool_enforcer_pending = true;
                     }
                 }
@@ -1316,6 +1322,24 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         }
     }
 
+    // If a multi-step plan is active and there are steps left, inject an explicit
+    // continuation directive into the model context (NOT saved to DB / not shown in UI).
+    // This prevents the model from stopping after each step and waiting.
+    if !app.active_plan.is_empty() && app.plan_step < app.active_plan.len() {
+        let next_step = app.active_plan[app.plan_step].clone();
+        let remaining = app.active_plan.len() - app.plan_step;
+        chat.push(ChatMessage {
+            role: "user".to_string(),
+            content: format!(
+                "[PLAN CONTINUATION — {} step(s) remaining]\nNow execute step {}/{}: \"{}\"\nCall the appropriate tool immediately. Do NOT write any text before the tool call.",
+                remaining,
+                app.plan_step + 1,
+                app.active_plan.len(),
+                next_step,
+            ),
+        });
+    }
+
     let model_id    = app.current_model.clone();
     let tx          = app.event_tx.clone();
     let http_client = app.http_client.clone();
@@ -1378,9 +1402,19 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
     if app.tool_iterations >= 15 { return Ok(()); }
     app.tool_iterations += 1;
 
-    let correction = "You described what you would do but didn't call any tools. \
-        Execute the task RIGHT NOW using tool calls. Do NOT describe your plan — just call the tools.";
-    let enforcer_msg = Message::new_user(&app.session_id, correction);
+    // Build a targeted correction — if a plan is active, name the exact next step.
+    let correction = if !app.active_plan.is_empty() && app.plan_step < app.active_plan.len() {
+        let next = &app.active_plan[app.plan_step];
+        format!(
+            "You stopped without completing the plan. Execute step {}/{} NOW: \"{}\". \
+             Call the tool immediately — no commentary before the tool call.",
+            app.plan_step + 1, app.active_plan.len(), next
+        )
+    } else {
+        "You described what you would do but didn't call any tools. \
+         Execute the task RIGHT NOW using tool calls. Do NOT describe — just call the tools.".to_string()
+    };
+    let enforcer_msg = Message::new_user(&app.session_id, &correction);
     crate::db::insert_message(&app.db, &enforcer_msg)?;
     app.messages.push(enforcer_msg);
 
