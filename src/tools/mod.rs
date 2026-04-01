@@ -40,8 +40,8 @@ pub struct ToolDef {
 pub static ALL_TOOLS: &[ToolDef] = &[
     ToolDef {
         name:        "make_plan",
-        description: "Declare a multi-step plan before executing. Call this FIRST for any task that needs 3+ tool calls. List each step you will take. After calling this, immediately start executing step 1 without waiting.",
-        parameters:  r#"{"type":"object","properties":{"title":{"type":"string","description":"Short task title"},"steps":{"type":"array","items":{"type":"string"},"description":"Ordered list of steps you will execute"}},"required":["steps"]}"#,
+        description: "Declare a multi-step plan before executing. Call this FIRST for any task needing 3+ tool calls. Each step MUST name the specific tool you will call and what arguments. Example: 'tree on . to map structure' not 'explore structure'. After calling this, immediately execute step 1.",
+        parameters:  r#"{"type":"object","properties":{"title":{"type":"string","description":"Short task title"},"steps":{"type":"array","items":{"type":"string"},"description":"Ordered list of steps — each must name a specific tool and target, e.g. 'batch_read src/main.rs and Cargo.toml', 'grep for fn main in src/', 'write_file analysis.md with findings'"}},"required":["steps"]}"#,
         requires_permission: false,
     },
     ToolDef {
@@ -307,13 +307,12 @@ Fetch a URL (docs, APIs, etc.).
 ## Codebase Exploration
 
 When asked to analyze, summarize, or understand a codebase:
-1. Call `tree` first to map the structure (max_depth: 4)
-2. Call `make_plan` listing every file/area to examine
-3. Use `batch_read` to scan 5-20 files at once (80 lines each)
-4. Use `read_file` with start_line/end_line for files needing deeper analysis
-5. Use `grep` to find patterns across the codebase
-6. For 20+ file codebases, save running notes with `write_file` to a temp `_analysis_notes.md`
-7. Deliver the full summary only after all planned files are read
+1. `tree` first to map structure (max_depth: 4)
+2. `make_plan` with CONCRETE steps naming specific tools: "batch_read src/main.rs, Cargo.toml" not "explore structure"
+3. `batch_read` groups of 5-20 files at once (entry points first, then src/ groups)
+4. `read_file` with start_line/end_line for files needing deep analysis
+5. `grep` for key patterns across the codebase
+6. Final step: `write_file` to save the comprehensive summary/guide to a file
 
 ---
 
@@ -473,21 +472,34 @@ This ensures every step is informed by the actual result of the previous step.
 
 ## Codebase Exploration
 
-When asked to analyze, summarize, or understand a codebase, follow this systematic process:
+When asked to analyze, summarize, or understand a codebase:
 
-1. **Map first** — call `tree` (max_depth: 4) to see the full structure before reading anything
-2. **Plan explicitly** — call `make_plan` with every file or area you intend to examine, so progress is tracked
-3. **Scan broadly with batch_read** — use `batch_read` to read 5-20 small/medium files at once (each shown at 80 lines). Prioritize entry points: main.rs, index.ts, app.py, package.json, Cargo.toml, README, etc.
-4. **Dive deeper with read_file** — for files that need full detail, call `read_file` with `start_line`/`end_line` to read specific sections
-5. **Search for patterns** — use `grep` to find how key symbols, functions, or patterns are used across the whole codebase
-6. **Track findings** — for large codebases (20+ files), use `write_file` to save running notes to a temp file (e.g., `_analysis_notes.md`) so you don't lose context. Update it as you go.
-7. **Summarize after all reads** — only write the final summary once all planned files are read
+**Step format — IMPORTANT**: Every `make_plan` step must name a specific tool and target. Bad: "Explore the structure". Good: "tree on . with max_depth 4 to map layout".
+
+**Recommended sequence:**
+1. `tree` on root to map overall structure (max_depth: 4)
+2. `batch_read` on manifest/config files: Cargo.toml, package.json, README, pyproject.toml, go.mod
+3. `batch_read` on entry-point files: main.rs, index.ts/js, app.py, main.go, lib.rs (up to 10 at once)
+4. `batch_read` on src/ subdirectory files in groups of 10
+5. `grep` for key symbols, function names, or patterns if needed
+6. `write_file` to save the final comprehensive summary/guide to a file
+
+**Example plan for codebase analysis:**
+```
+steps: [
+  "tree on . max_depth:4 to map project structure",
+  "batch_read Cargo.toml, README.md, src/main.rs to understand entry points",
+  "batch_read src/ group 1: first 10 source files",
+  "batch_read src/ group 2: remaining source files",
+  "write_file CODEBASE_GUIDE.md with full comprehensive summary"
+]
+```
 
 Key rules:
-- `read_file` is capped at 300 lines by default. If a file is truncated, use `start_line`/`end_line` to read remaining sections.
-- `batch_read` is capped at 80 lines per file — best for scanning, not deep analysis
-- Use `glob` to find all files of a type: `{"pattern": "**/*.rs"}` or `{"pattern": "**/*.ts"}`
-- When summarizing, cover: purpose, architecture, key modules/files, important patterns, dependencies
+- `read_file` is capped at 300 lines by default — use `start_line`/`end_line` for large files
+- `batch_read` reads up to 20 files at once, 80 lines each — use for broad scanning
+- The FINAL step for any analysis/summary task must be `write_file` to save the output
+- When summarizing: cover purpose, architecture, key modules, data flow, dependencies
 
 ---
 

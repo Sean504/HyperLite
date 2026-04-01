@@ -1328,14 +1328,18 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
     if !app.active_plan.is_empty() && app.plan_step < app.active_plan.len() {
         let next_step = app.active_plan[app.plan_step].clone();
         let remaining = app.active_plan.len() - app.plan_step;
+        let tool_hint = suggest_tool_for_step(&next_step);
         chat.push(ChatMessage {
             role: "user".to_string(),
             content: format!(
-                "[PLAN CONTINUATION — {} step(s) remaining]\nNow execute step {}/{}: \"{}\"\nCall the appropriate tool immediately. Do NOT write any text before the tool call.",
+                "[PLAN CONTINUATION — {} step(s) remaining]\n\
+                 Execute step {}/{}: \"{}\"\n\
+                 → Call tool `{}` now. Emit ONLY the <tool_call> block. No text before it.",
                 remaining,
                 app.plan_step + 1,
                 app.active_plan.len(),
                 next_step,
+                tool_hint,
             ),
         });
     }
@@ -1396,6 +1400,34 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Map a plan step description to the most appropriate tool name.
+/// Used to inject a concrete tool hint into plan continuation messages.
+fn suggest_tool_for_step(step: &str) -> &'static str {
+    let s = step.to_lowercase();
+    if s.contains("write") || s.contains("save") || s.contains("output") || s.contains("create file")
+        || s.contains("summary") || s.contains("guide") || s.contains("report") || s.contains("document") {
+        "write_file"
+    } else if s.contains("batch") || s.contains("scan") || s.contains("multiple files")
+        || s.contains("all files") || s.contains("each file") {
+        "batch_read"
+    } else if s.contains("tree") || s.contains("structure") || s.contains("layout") || s.contains("map") {
+        "tree"
+    } else if s.contains("grep") || s.contains("search") || s.contains("find pattern") || s.contains("look for") {
+        "grep"
+    } else if s.contains("glob") || s.contains("list all") || s.contains("find files") {
+        "glob"
+    } else if s.contains("read") || s.contains("open") || s.contains("examine") || s.contains("inspect")
+        || s.contains("look at") || s.contains("check") || s.contains("review") || s.contains("analyze") {
+        "batch_read"
+    } else if s.contains("list") || s.contains("dir") || s.contains("directory") || s.contains("folder") {
+        "list_dir"
+    } else if s.contains("shell") || s.contains("run") || s.contains("execute") || s.contains("build") || s.contains("test") {
+        "shell"
+    } else {
+        "read_file"
+    }
+}
+
 /// Fix 1 — Tool enforcer: model said it would act but issued no tool calls.
 /// Inject a short correction message and re-stream with low temperature.
 async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
@@ -1404,11 +1436,12 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
 
     // Build a targeted correction — if a plan is active, name the exact next step.
     let correction = if !app.active_plan.is_empty() && app.plan_step < app.active_plan.len() {
-        let next = &app.active_plan[app.plan_step];
+        let next = &app.active_plan[app.plan_step].clone();
+        let tool_hint = suggest_tool_for_step(next);
         format!(
             "You stopped without completing the plan. Execute step {}/{} NOW: \"{}\". \
-             Call the tool immediately — no commentary before the tool call.",
-            app.plan_step + 1, app.active_plan.len(), next
+             → Use tool `{}`. Emit ONLY the <tool_call> block. No text before it.",
+            app.plan_step + 1, app.active_plan.len(), next, tool_hint
         )
     } else {
         "You described what you would do but didn't call any tools. \
