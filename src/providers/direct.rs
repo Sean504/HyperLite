@@ -169,15 +169,24 @@ impl DirectGgufProvider {
                 ))?
         };
 
-        Ok(tokio::process::Command::new(&runtime_bin)
-            .arg("--model").arg(path)
-            .arg("--port").arg(port.to_string())
-            .arg("--host").arg("127.0.0.1")
-            .arg("--ctx-size").arg("4096")
-            .arg("--n-gpu-layers").arg("0")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()?)
+        // llamafile needs --server to run as an HTTP server; llama-server is already a server
+        let is_llamafile = runtime_bin.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with("llamafile"))
+            .unwrap_or(false);
+
+        let mut cmd = tokio::process::Command::new(&runtime_bin);
+        cmd.arg("--model").arg(path)
+           .arg("--port").arg(port.to_string())
+           .arg("--host").arg("127.0.0.1")
+           .arg("--ctx-size").arg("4096")
+           .arg("--n-gpu-layers").arg("0")
+           .stdout(std::process::Stdio::null())
+           .stderr(std::process::Stdio::null());
+        if is_llamafile {
+            cmd.arg("--server");
+        }
+        Ok(cmd.spawn()?)
     }
 }
 
@@ -232,17 +241,46 @@ impl LocalProvider for DirectGgufProvider {
             .unwrap_or(false);
 
         if !alive {
-            // Spawn the runtime
-            let _child = self.spawn_runtime(&path, port).await?;
-            // Wait for it to start accepting connections (max 10s)
-            for _ in 0..20 {
+            // Spawn the runtime — process runs independently after this returns
+            self.spawn_runtime(&path, port).await?;
+
+            // Wait up to 90s for the server to become ready.
+            // llamafile/llama-server can take a while to memory-map a large model.
+            let mut ready = false;
+            for i in 0..180 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                let ok = self.client
+                // Try /health first; fall back to /v1/models (some builds differ)
+                let health_ok = self.client
                     .get(format!("{}/health", base_url))
+                    .timeout(std::time::Duration::from_millis(400))
                     .send().await
-                    .map(|r| r.status().is_success())
+                    .map(|r| r.status().is_success() || r.status().as_u16() == 503)
                     .unwrap_or(false);
-                if ok { break; }
+                let models_ok = if !health_ok {
+                    self.client
+                        .get(format!("{}/v1/models", base_url))
+                        .timeout(std::time::Duration::from_millis(400))
+                        .send().await
+                        .map(|r| r.status().is_success())
+                        .unwrap_or(false)
+                } else { false };
+
+                if health_ok || models_ok {
+                    ready = true;
+                    break;
+                }
+                // After 10s without connection, assume process failed to start
+                if i == 20 {
+                    let _ = self.client.get(format!("{}/health", base_url))
+                        .send().await;  // one final probe
+                }
+            }
+            if !ready {
+                anyhow::bail!(
+                    "llamafile/llama-server did not start on {} within 90s. \
+                     The model may be too large for available memory.",
+                    base_url
+                );
             }
         }
 
