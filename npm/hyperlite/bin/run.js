@@ -6,10 +6,10 @@ const path = require('path');
 const os = require('os');
 
 const PLATFORM_PACKAGES = {
-  'win32-x64':    { pkg: '@hyperlite/win32-x64',    bin: 'hl.exe' },
-  'linux-x64':    { pkg: '@hyperlite/linux-x64',    bin: 'hl'     },
-  'darwin-arm64': { pkg: '@hyperlite/darwin-arm64', bin: 'hl'     },
-  'darwin-x64':   { pkg: '@hyperlite/darwin-x64',   bin: 'hl'     },
+  'win32-x64':    { pkg: '@hyperlite-ai/win32-x64',    bin: 'hl.exe' },
+  'linux-x64':    { pkg: '@hyperlite-ai/linux-x64',    bin: 'hl'     },
+  'darwin-arm64': { pkg: '@hyperlite-ai/darwin-arm64', bin: 'hl'     },
+  'darwin-x64':   { pkg: '@hyperlite-ai/darwin-x64',   bin: 'hl'     },
 };
 
 function getPlatformKey() {

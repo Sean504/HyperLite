@@ -1,5 +1,5 @@
 {
-  "name": "hyperlite",
+  "name": "hyperlite-ai",
   "version": "0.1.0",
   "description": "Terminal-native local LLM chat client — fast, offline, agentic",
   "keywords": ["llm", "ollama", "tui", "terminal", "ai", "chat", "local", "offline"],
@@ -15,10 +15,10 @@
   },
   "files": ["bin/run.js"],
   "optionalDependencies": {
-    "@hyperlite/win32-x64":    "0.1.0",
-    "@hyperlite/linux-x64":    "0.1.0",
-    "@hyperlite/darwin-arm64": "0.1.0",
-    "@hyperlite/darwin-x64":   "0.1.0"
+    "@hyperlite-ai/win32-x64":    "0.1.0",
+    "@hyperlite-ai/linux-x64":    "0.1.0",
+    "@hyperlite-ai/darwin-arm64": "0.1.0",
+    "@hyperlite-ai/darwin-x64":   "0.1.0"
   },
   "engines": {
     "node": ">=16"

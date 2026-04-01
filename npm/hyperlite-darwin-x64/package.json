@@ -1,5 +1,5 @@
 {
-  "name": "@hyperlite/darwin-x64",
+  "name": "@hyperlite-ai/darwin-x64",
   "version": "0.1.0",
   "description": "HyperLite binary for macOS Intel",
   "os": ["darwin"],

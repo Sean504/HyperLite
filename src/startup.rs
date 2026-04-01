@@ -102,7 +102,10 @@ impl PreFlight {
     fn run() -> Self {
         let has_curl  = which::which("curl").is_ok();
         let use_wget  = !has_curl && which::which("wget").is_ok();
-        let is_root   = unsafe { libc::getuid() } == 0;
+        #[cfg(unix)]
+        let is_root = unsafe { libc::getuid() } == 0;
+        #[cfg(not(unix))]
+        let is_root = false;
         let has_sudo  = is_root || which::which("sudo").is_ok();
 
         let pkg_manager = if which::which("apt-get").is_ok()  { "apt-get" }
@@ -791,7 +794,7 @@ const LOGO: &[&str] = &[
     r"/    ~    <   |  |\____ \_/ __ \_  __ \    |   |  \   __\/ __ \ ",
     r"\    Y    /\___  ||  |_> >  ___/|  | \/    |___|  ||  | \  ___/ ",
     r" \___|_  / / ____||   __/ \___  >__|  |_______ \__||__|  \___  >",
-    r"       \/  \/     |__|        \/              \/              \/ ",
+    r"       \/  \/     |__|        \/              \/             \/ ",
 ];
 
 fn render_splash(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {

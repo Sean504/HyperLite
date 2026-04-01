@@ -1,5 +1,5 @@
 {
-  "name": "@hyperlite/linux-x64",
+  "name": "@hyperlite-ai/linux-x64",
   "version": "0.1.0",
   "description": "HyperLite binary for Linux x64",
   "os": ["linux"],

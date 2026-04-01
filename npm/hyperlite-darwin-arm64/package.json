@@ -1,5 +1,5 @@
 {
-  "name": "@hyperlite/darwin-arm64",
+  "name": "@hyperlite-ai/darwin-arm64",
   "version": "0.1.0",
   "description": "HyperLite binary for macOS Apple Silicon",
   "os": ["darwin"],
