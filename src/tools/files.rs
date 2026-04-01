@@ -75,6 +75,13 @@ pub fn write_file(params: &Value, cwd: &Path) -> Result<String> {
     let content = params.get("content").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("write_file: 'content' required"))?;
 
+    if content.is_empty() {
+        anyhow::bail!(
+            "write_file: 'content' is empty. You must provide the actual file content. \
+             Do not call write_file with an empty string — generate the content now and include it."
+        );
+    }
+
     let path = resolve(cwd, path_str);
 
     // Create parent dirs if needed
