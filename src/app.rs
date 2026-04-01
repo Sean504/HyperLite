@@ -224,7 +224,7 @@ pub async fn run(
         // Poll for terminal events
         if ct_event::poll(tick_rate)? {
             match ct_event::read()? {
-                CtEvent::Key(key) => {
+                CtEvent::Key(key) if key.kind == crossterm::event::KeyEventKind::Press => {
                     if handle_key(&mut app, key).await? {
                         break;
                     }
