@@ -282,6 +282,149 @@ Fetch a URL (docs, APIs, etc.).
     out
 }
 
+// ── Built-in agent definitions ────────────────────────────────────────────────
+
+pub struct BuiltinAgent {
+    pub id:          &'static str,
+    pub name:        &'static str,
+    pub description: &'static str,
+    pub allowed_tools: Option<&'static [&'static str]>,
+}
+
+pub static BUILTIN_AGENTS: &[BuiltinAgent] = &[
+    BuiltinAgent {
+        id:          "general",
+        name:        "General",
+        description: "Conversational assistant with full tool access. Best for chat, analysis, and general questions.",
+        allowed_tools: None, // all tools
+    },
+    BuiltinAgent {
+        id:          "build",
+        name:        "Build",
+        description: "Expert coding agent with full filesystem and shell access. Best for writing, editing, and building code.",
+        allowed_tools: None, // all tools
+    },
+    BuiltinAgent {
+        id:          "plan",
+        name:        "Plan",
+        description: "Read-only exploration agent. Can read and search files but will ask before writing or running commands.",
+        allowed_tools: Some(&["read_file", "list_dir", "grep", "glob", "search", "http_fetch"]),
+    },
+];
+
+pub fn get_builtin_agent(id: &str) -> Option<&'static BuiltinAgent> {
+    BUILTIN_AGENTS.iter().find(|a| a.id == id)
+}
+
+/// Build the system prompt for the currently active agent.
+pub fn build_agent_system_prompt(
+    cwd: &std::path::Path,
+    project_ctx: Option<&crate::project::ProjectContext>,
+    agent_id: &str,
+    custom_agents: &[crate::db::AgentRow],
+) -> String {
+    // Check custom agents first (they override built-ins if same id)
+    if let Some(custom) = custom_agents.iter().find(|a| a.id == agent_id) {
+        let allowed: Option<Vec<&str>> = custom.allowed_tools.as_ref().map(|s| {
+            s.split(',').map(|t| t.trim()).collect()
+        });
+        return build_prompt_with_config(
+            cwd, project_ctx,
+            custom.system.as_deref(),
+            allowed.as_deref().map(|v| v.as_slice()),
+            agent_id == "plan",
+        );
+    }
+
+    // Built-in agents
+    let is_plan = agent_id == "plan";
+    let custom_system = match agent_id {
+        "build" => Some("You are HyperLite Build — an expert software engineer with direct filesystem and shell access. Focus on writing correct, efficient code. Always read files before editing. Build and test after changes."),
+        "plan"  => Some("You are HyperLite Plan — a read-only analysis agent. You can read files, search code, and explore the project. You CANNOT write files or run shell commands. Provide detailed analysis and plans. If the user asks you to make changes, explain what changes are needed but do not execute them."),
+        _       => None,
+    };
+
+    let allowed = get_builtin_agent(agent_id).and_then(|a| a.allowed_tools);
+    build_prompt_with_config(cwd, project_ctx, custom_system, allowed, is_plan)
+}
+
+fn build_prompt_with_config(
+    cwd: &std::path::Path,
+    project_ctx: Option<&crate::project::ProjectContext>,
+    custom_system: Option<&str>,
+    allowed_tools: Option<&[&str]>,
+    is_plan: bool,
+) -> String {
+    let mut out = String::new();
+
+    if let Some(sys) = custom_system {
+        out.push_str(sys);
+        out.push_str("\n");
+    } else {
+        out.push_str("You are HyperLite, an expert AI coding assistant with direct filesystem access.\n");
+    }
+    out.push_str(&format!("Working directory: {}\n\n", cwd.display()));
+
+    if let Some(ctx) = project_ctx {
+        out.push_str(&crate::project::build_system_prefix(ctx));
+        out.push_str("\n\n");
+    }
+
+    if is_plan {
+        out.push_str("## Mode: Plan (Read-Only)\nYou are in plan mode. You may read and search files. You may NOT write files, edit files, delete files, or run shell commands. Describe changes needed but do not execute them.\n\n");
+    }
+
+    // Build tool documentation for allowed tools only
+    let tool_names: Vec<&str> = if let Some(allowed) = allowed_tools {
+        allowed.to_vec()
+    } else {
+        ALL_TOOLS.iter().map(|t| t.name).collect()
+    };
+
+    out.push_str(r#"## Tool Use
+
+CRITICAL RULES:
+1. To call a tool, output ONLY the raw XML block below — no markdown code fences, no backticks, no extra wrapping.
+2. After emitting a <tool_call> block, STOP your response immediately. Do NOT write any text after the closing </tool_call> tag.
+3. Do NOT predict or guess the output — wait. The system will execute the tool and send you a <tool_result> block.
+4. When you receive a <tool_result>, read it and continue your response naturally.
+5. NEVER output file contents as plain chat text. To create or save a file, ALWAYS use write_file. To show a user what you wrote, use read_file after writing.
+6. JSON parameters MUST use \n for newlines inside string values — never embed literal newlines in JSON strings.
+
+Tool call format (emit this raw, no ``` wrapping):
+
+<tool_call>
+<name>tool_name</name>
+<parameters>{"key": "value"}</parameters>
+</tool_call>
+
+One tool call per response. Wait for the result before calling another tool.
+
+---
+
+"#);
+
+    // Emit docs for each allowed tool
+    for tool in ALL_TOOLS {
+        if tool_names.contains(&tool.name) {
+            out.push_str(&format!("### {}\n{}\n\n", tool.name, tool.description));
+        }
+    }
+
+    out.push_str(r#"---
+
+## Coding Guidelines
+
+- **Read before editing** — always read a file's current content before making changes
+- **Explore first** — use `list_dir` and `glob` to understand the project structure
+- **Verify after edits** — read the file back to confirm your changes applied correctly
+- **Build and test** — after making code changes, run `shell` to build/test and fix errors
+- **Targeted edits** — use `edit_file` for small changes, `write_file` only when creating or fully replacing
+"#);
+
+    out
+}
+
 /// Build the tool use section for a system prompt (tag-based mode for models
 /// that don't support native function calling).
 pub fn build_tool_prompt(tools: &[&str]) -> String {

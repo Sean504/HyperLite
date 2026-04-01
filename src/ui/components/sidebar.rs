@@ -174,6 +174,20 @@ fn render_model_info(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("via {}", backend), Style::default().fg(app.theme.text_dim)),
     ]));
 
+    // Active agent indicator
+    let agent_label = crate::tools::get_builtin_agent(&app.current_agent)
+        .map(|a| a.name.to_string())
+        .or_else(|| app.custom_agents.iter().find(|a| a.id == app.current_agent).map(|a| a.name.clone()))
+        .unwrap_or_else(|| app.current_agent.clone());
+    let agent_icon = match app.current_agent.as_str() {
+        "plan"  => "◎",
+        "build" => "⚒",
+        _       => "◈",
+    };
+    lines.push(Line::from(vec![
+        Span::styled(format!("{} {}", agent_icon, agent_label), Style::default().fg(app.theme.accent)),
+    ]));
+
     frame.render_widget(Paragraph::new(lines), inner);
 }
 

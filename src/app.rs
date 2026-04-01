@@ -27,6 +27,9 @@ pub enum ActiveDialog {
     CommandPalette,
     ThemePicker,
     FolderInput,
+    AgentPicker,
+    AgentEditor,
+    DraftPicker,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,6 +119,23 @@ pub struct App {
 
     // Agentic tool loop safety counter (reset on each user message)
     pub tool_iterations: u8,
+
+    // Agent system
+    pub current_agent:   String,             // "general" | "build" | "plan" | custom id
+    pub custom_agents:   Vec<crate::db::AgentRow>,
+
+    // Redo stack — each entry is a Vec of messages removed by one undo
+    pub undo_stack:      Vec<Vec<crate::session::message::Message>>,
+
+    // Draft stash
+    pub drafts:          Vec<crate::db::DraftRow>,
+
+    // Agent editor form fields
+    pub agent_editor_name:   String,
+    pub agent_editor_desc:   String,
+    pub agent_editor_system: tui_textarea::TextArea<'static>,
+    pub agent_editor_field:  usize,  // 0=name, 1=desc, 2=system
+    pub agent_editor_id:     Option<String>,  // Some(id) = editing, None = new
 
     // In-dialog model download state
     pub model_dl_active:     Option<String>,  // model name currently downloading
@@ -450,7 +470,7 @@ async fn dispatch_action(app: &mut App, action: Action) -> anyhow::Result<bool> 
         RenameSession => {}
         ForkSession   => fork_session(app).await?,
         UndoMessage   => undo_message(app).await?,
-        RedoMessage   => {}
+        RedoMessage   => redo_message(app).await?,
         CopyLastMessage => copy_last_message(app),
         CompactSession  => {}
 
@@ -460,7 +480,7 @@ async fn dispatch_action(app: &mut App, action: Action) -> anyhow::Result<bool> 
         CycleModelNext => cycle_model(app, 1),
         CycleModelPrev => cycle_model(app, -1),
         CycleFavoriteNext | CycleFavoritePrev => {}
-        AgentPicker    => {}
+        AgentPicker    => open_dialog(app, ActiveDialog::AgentPicker),
 
         ToggleThinking    => app.show_thinking = !app.show_thinking,
         ToggleSidebar     => app.sidebar_open  = !app.sidebar_open,
@@ -476,6 +496,8 @@ async fn dispatch_action(app: &mut App, action: Action) -> anyhow::Result<bool> 
         Help           => open_dialog(app, ActiveDialog::Help),
         StatusView     => {}
         OpenFolder     => open_folder_browser(app),
+        StashDraft     => stash_draft(app)?,
+        PopDraft       => open_dialog(app, ActiveDialog::DraftPicker),
 
         ExternalEditor => open_external_editor(app).await?,
         ThemePicker    => open_dialog(app, ActiveDialog::ThemePicker),
@@ -579,6 +601,39 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
         return Ok(false);
     }
 
+    // AgentEditor — full keyboard takeover for the form
+    if app.active_dialog == ActiveDialog::AgentEditor {
+        match key.code {
+            KeyCode::Esc => close_dialog(app),
+            KeyCode::Tab => {
+                app.agent_editor_field = (app.agent_editor_field + 1) % 3;
+            }
+            KeyCode::Char('s') if key.modifiers == KeyModifiers::CONTROL => {
+                save_agent_editor(app)?;
+                close_dialog(app);
+            }
+            _ => {
+                if app.agent_editor_field == 2 {
+                    app.agent_editor_system.input(key);
+                } else {
+                    // Name / description — basic char input
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if app.agent_editor_field == 0 { app.agent_editor_name.push(c); }
+                            else { app.agent_editor_desc.push(c); }
+                        }
+                        KeyCode::Backspace => {
+                            if app.agent_editor_field == 0 { app.agent_editor_name.pop(); }
+                            else { app.agent_editor_desc.pop(); }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        return Ok(false);
+    }
+
     match key.code {
         KeyCode::Esc   => close_dialog(app),
         KeyCode::Enter => confirm_dialog(app).await?,
@@ -596,6 +651,31 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
                 app.command_palette_tab = (app.command_palette_tab + 1) % 4;
                 app.dialog_selected_idx = 0;
                 app.dialog_search_query.clear();
+            }
+        }
+        // 'd' = delete in AgentPicker (custom agents) and DraftPicker
+        KeyCode::Char('d') if key.modifiers == KeyModifiers::NONE => {
+            if app.active_dialog == ActiveDialog::AgentPicker {
+                let builtin_len = crate::tools::BUILTIN_AGENTS.len();
+                let idx = app.dialog_selected_idx;
+                if idx >= builtin_len && idx < builtin_len + app.custom_agents.len() {
+                    let agent_id = app.custom_agents[idx - builtin_len].id.clone();
+                    crate::db::delete_agent(&app.db, &agent_id)?;
+                    app.custom_agents.retain(|a| a.id != agent_id);
+                    if app.current_agent == agent_id { app.current_agent = "general".to_string(); }
+                    app.dialog_selected_idx = app.dialog_selected_idx.saturating_sub(1);
+                    app.push_toast(crate::ui::components::toast::Toast::info("Agent deleted"));
+                }
+            } else if app.active_dialog == ActiveDialog::DraftPicker && !app.drafts.is_empty() {
+                let idx = app.dialog_selected_idx.min(app.drafts.len().saturating_sub(1));
+                let draft_id = app.drafts[idx].id.clone();
+                crate::db::delete_draft(&app.db, &draft_id)?;
+                app.drafts.remove(idx);
+                app.dialog_selected_idx = app.dialog_selected_idx.saturating_sub(1);
+                app.push_toast(crate::ui::components::toast::Toast::info("Draft deleted"));
+            } else {
+                app.dialog_search_query.push('d');
+                app.dialog_selected_idx = 0;
             }
         }
         KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
@@ -844,6 +924,9 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                 Some("Rename Session")     => begin_rename_session(app),
                 Some("Compact Session")    => compact_session(app).await?,
                 Some("Switch Model")       => open_dialog(app, ActiveDialog::ModelPicker),
+                Some("Switch Agent")       => open_dialog(app, ActiveDialog::AgentPicker),
+                Some("Stash Draft")        => stash_draft(app)?,
+                Some("Pop Draft")          => open_dialog(app, ActiveDialog::DraftPicker),
                 Some("Cycle Model Next")   => cycle_model(app, 1),
                 Some("Toggle Sidebar")     => app.sidebar_open = !app.sidebar_open,
                 Some("Toggle Thinking")    => app.show_thinking = !app.show_thinking,
@@ -860,6 +943,57 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
             }
         }
         ActiveDialog::FolderInput => {} // handled in handle_dialog_key
+
+        ActiveDialog::AgentPicker => {
+            let total = crate::tools::BUILTIN_AGENTS.len() + app.custom_agents.len() + 1;
+            let idx = app.dialog_selected_idx.min(total.saturating_sub(1));
+            let builtin_len = crate::tools::BUILTIN_AGENTS.len();
+            let custom_len  = app.custom_agents.len();
+            if idx < builtin_len {
+                let agent_id = crate::tools::BUILTIN_AGENTS[idx].id.to_string();
+                let agent_name = crate::tools::BUILTIN_AGENTS[idx].name.to_string();
+                app.current_agent = agent_id;
+                app.push_toast(crate::ui::components::toast::Toast::success(
+                    format!("Agent: {}", agent_name)
+                ));
+                close_dialog(app);
+            } else if idx < builtin_len + custom_len {
+                let agent = app.custom_agents[idx - builtin_len].clone();
+                app.current_agent = agent.id.clone();
+                app.push_toast(crate::ui::components::toast::Toast::success(
+                    format!("Agent: {}", agent.name)
+                ));
+                close_dialog(app);
+            } else {
+                // "New Agent…" selected
+                app.agent_editor_name.clear();
+                app.agent_editor_desc.clear();
+                app.agent_editor_system = tui_textarea::TextArea::default();
+                app.agent_editor_field = 0;
+                app.agent_editor_id = None;
+                open_dialog(app, ActiveDialog::AgentEditor);
+            }
+        }
+
+        ActiveDialog::AgentEditor => {
+            // Ctrl+S saves — Enter handled via key handler; this is fallback
+            save_agent_editor(app)?;
+            close_dialog(app);
+        }
+
+        ActiveDialog::DraftPicker => {
+            if !app.drafts.is_empty() {
+                let idx = app.dialog_selected_idx.min(app.drafts.len().saturating_sub(1));
+                let content = app.drafts[idx].content.clone();
+                app.textarea = tui_textarea::TextArea::default();
+                for ch in content.chars() {
+                    if ch == '\n' { app.textarea.insert_newline(); }
+                    else { app.textarea.insert_char(ch); }
+                }
+            }
+            close_dialog(app);
+        }
+
         _ => close_dialog(app),
     }
     Ok(())
@@ -900,11 +1034,14 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     app.streaming = true;
     app.streaming_buf.clear();
     app.tool_iterations = 0;
+    app.undo_stack.clear(); // new message invalidates redo history
 
     // Build system prompt with full tool documentation
-    let system = crate::tools::build_coding_system_prompt(
+    let system = crate::tools::build_agent_system_prompt(
         &app.working_dir,
         app.project_ctx.as_ref(),
+        &app.current_agent,
+        &app.custom_agents,
     );
 
     // Build chat messages for provider
@@ -1035,7 +1172,35 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
 
     let mut result_parts: Vec<String> = Vec::new();
 
+    // Determine which tools are allowed by current agent
+    let plan_mode_tools: Option<Vec<String>> = {
+        // Check custom agent first
+        let custom = app.custom_agents.iter().find(|a| a.id == app.current_agent);
+        if let Some(c) = custom {
+            c.allowed_tools.as_ref().map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+        } else {
+            crate::tools::get_builtin_agent(&app.current_agent)
+                .and_then(|a| a.allowed_tools)
+                .map(|v| v.iter().map(|s| s.to_string()).collect())
+        }
+    };
+
     for call in &calls {
+        // Plan-mode: block write/shell tools
+        if let Some(ref allowed) = plan_mode_tools {
+            if !allowed.contains(&call.name) {
+                app.push_toast(crate::ui::components::toast::Toast::warning(
+                    format!("Plan mode: '{}' is not allowed. Switch to Build agent to execute.", call.name)
+                ));
+                let blocked_result = format!(
+                    "<tool_result>\n<name>{}</name>\n<status>error</status>\n<output>\nBlocked by Plan mode. This agent cannot run '{}'. The user must switch to the Build agent.\n</output>\n</tool_result>",
+                    call.name, call.name
+                );
+                result_parts.push(blocked_result);
+                continue;
+            }
+        }
+
         // Toast so the user sees each tool firing
         app.push_toast(crate::ui::components::toast::Toast::info(
             format!("⚙  {}", call.name)
@@ -1067,9 +1232,11 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
     app.streaming_buf.clear();
 
     // Re-build the full chat and send back to the model
-    let system = crate::tools::build_coding_system_prompt(
+    let system = crate::tools::build_agent_system_prompt(
         &app.working_dir,
         app.project_ctx.as_ref(),
+        &app.current_agent,
+        &app.custom_agents,
     );
 
     let mut chat: Vec<ChatMessage> = vec![
@@ -1197,25 +1364,96 @@ async fn fork_session(app: &mut App) -> anyhow::Result<()> {
 }
 
 async fn undo_message(app: &mut App) -> anyhow::Result<()> {
+    let mut removed: Vec<Message> = Vec::new();
+
     if let Some(last) = app.messages.last() {
         if last.role == Role::Assistant {
             let ts = last.created_at;
             crate::db::delete_messages_from(&app.db, &app.session_id, ts)?;
-            app.messages.pop();
+            removed.push(app.messages.pop().unwrap());
         }
     }
     if let Some(last) = app.messages.last() {
         if last.role == Role::User {
             let ts = last.created_at;
             crate::db::delete_messages_from(&app.db, &app.session_id, ts)?;
-            app.messages.pop();
+            removed.push(app.messages.pop().unwrap());
         }
     }
-    app.push_toast(crate::ui::components::toast::Toast::info("Undid last exchange"));
+
+    if !removed.is_empty() {
+        removed.reverse(); // preserve original order for redo
+        app.undo_stack.push(removed);
+        app.push_toast(crate::ui::components::toast::Toast::info("Undid last exchange  (Ctrl+Y to redo)"));
+    }
+    Ok(())
+}
+
+async fn redo_message(app: &mut App) -> anyhow::Result<()> {
+    if let Some(msgs) = app.undo_stack.pop() {
+        for msg in &msgs {
+            let mut restored = msg.clone();
+            restored.session_id = app.session_id.clone();
+            crate::db::insert_message(&app.db, &restored)?;
+            app.messages.push(restored);
+        }
+        app.push_toast(crate::ui::components::toast::Toast::info("Redid last exchange"));
+    }
     Ok(())
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
+
+fn stash_draft(app: &mut App) -> anyhow::Result<()> {
+    let text: String = app.textarea.lines().join("\n");
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        app.push_toast(crate::ui::components::toast::Toast::warning("Nothing to stash"));
+        return Ok(());
+    }
+    let now = chrono::Utc::now();
+    let label = now.format("%b %d %H:%M").to_string();
+    let draft = crate::db::DraftRow {
+        id:         ulid::Ulid::new().to_string(),
+        label,
+        content:    text,
+        created_at: now.timestamp(),
+    };
+    crate::db::insert_draft(&app.db, &draft)?;
+    app.drafts.insert(0, draft);
+    app.textarea = tui_textarea::TextArea::default();
+    app.push_toast(crate::ui::components::toast::Toast::success("Draft stashed  (Ctrl+Shift+D to restore)"));
+    Ok(())
+}
+
+fn save_agent_editor(app: &mut App) -> anyhow::Result<()> {
+    let name = app.agent_editor_name.trim().to_string();
+    if name.is_empty() {
+        app.push_toast(crate::ui::components::toast::Toast::error("Agent name is required"));
+        return Ok(());
+    }
+    let system_text = app.agent_editor_system.lines().join("\n").trim().to_string();
+    let now = chrono::Utc::now().timestamp();
+    let agent = crate::db::AgentRow {
+        id:            app.agent_editor_id.clone().unwrap_or_else(|| ulid::Ulid::new().to_string()),
+        name:          name.clone(),
+        description:   if app.agent_editor_desc.is_empty() { None } else { Some(app.agent_editor_desc.clone()) },
+        model:         None,
+        provider:      None,
+        system:        if system_text.is_empty() { None } else { Some(system_text) },
+        allowed_tools: None,
+        created_at:    now,
+    };
+    crate::db::insert_agent(&app.db, &agent)?;
+    // Refresh custom agents list
+    if let Some(existing) = app.custom_agents.iter_mut().find(|a| a.id == agent.id) {
+        *existing = agent.clone();
+    } else {
+        app.custom_agents.push(agent.clone());
+    }
+    app.push_toast(crate::ui::components::toast::Toast::success(format!("Agent '{}' saved", name)));
+    Ok(())
+}
 
 fn paste_clipboard(app: &mut App) {
     if let Ok(mut cb) = arboard::Clipboard::new() {

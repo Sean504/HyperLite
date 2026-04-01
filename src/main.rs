@@ -242,6 +242,16 @@ async fn run_app() -> anyhow::Result<()> {
 
         tool_iterations: 0,
 
+        current_agent:   "general".to_string(),
+        custom_agents:   crate::db::list_agents(&db).unwrap_or_default(),
+        undo_stack:      Vec::new(),
+        drafts:          crate::db::list_drafts(&db).unwrap_or_default(),
+        agent_editor_name:   String::new(),
+        agent_editor_desc:   String::new(),
+        agent_editor_system: tui_textarea::TextArea::default(),
+        agent_editor_field:  0,
+        agent_editor_id:     None,
+
         model_dl_active:      None,
         model_dl_bytes_done:  0,
         model_dl_bytes_total: 0,

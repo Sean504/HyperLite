@@ -24,6 +24,8 @@ pub enum Action {
     ToggleScrollbar, ToggleTerminalTitle,
     // Dialogs
     CommandPalette, Help, StatusView, OpenFolder,
+    // Drafts
+    StashDraft, PopDraft,
     // App
     Quit, Interrupt, ExternalEditor,
     ThemePicker, ThemeCycleNext, ThemeCyclePrev,
@@ -118,6 +120,11 @@ impl Keybinds {
         k.bind(KeyCombo::ctrl(Char('k')),                  Action::CommandPalette,   "Ctrl+K");
         k.bind(KeyCombo::plain(Char('?')),                 Action::Help,             "?");
         k.bind(KeyCombo::ctrl(Char('o')),                  Action::OpenFolder,       "Ctrl+O");
+
+        // Drafts
+        k.bind(KeyCombo::ctrl(Char('d')),                  Action::StashDraft,       "Ctrl+D");
+        k.bind(KeyCombo::new(Char('d'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+                                                           Action::PopDraft,         "Ctrl+Shift+D");
 
         // App
         k.bind(KeyCombo::ctrl(Char('q')),                  Action::Quit,             "Ctrl+Q");
@@ -226,6 +233,8 @@ fn action_description(action: &Action) -> &'static str {
         Help             => "Show help",
         StatusView       => "Show status",
         OpenFolder       => "Open folder / repo",
+        StashDraft       => "Stash input draft",
+        PopDraft         => "Restore stashed draft",
         Quit             => "Quit",
         Interrupt        => "Interrupt generation",
         ExternalEditor   => "Open in editor",

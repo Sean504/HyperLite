@@ -88,9 +88,12 @@ pub enum PermissionAction {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AgentConfig {
-    pub name:        String,
-    pub description: Option<String>,
-    pub model:       Option<String>,
-    pub provider:    Option<String>,
-    pub system:      Option<String>,
+    pub name:          String,
+    pub description:   Option<String>,
+    pub model:         Option<String>,
+    pub provider:      Option<String>,
+    pub system:        Option<String>,
+    /// If set, only these tools are available in this agent's system prompt.
+    /// Plan mode uses ["read_file","list_dir","grep","glob","search"].
+    pub allowed_tools: Option<Vec<String>>,
 }

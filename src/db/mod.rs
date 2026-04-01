@@ -28,6 +28,7 @@ pub fn open(db_path: &PathBuf) -> Result<Db> {
 
 fn run_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch(include_str!("../../migrations/001_initial.sql"))?;
+    conn.execute_batch(include_str!("../../migrations/002_agents_drafts.sql"))?;
     Ok(())
 }
 
@@ -188,6 +189,101 @@ pub fn delete_messages_from(db: &Db, session_id: &str, from_created_at: i64) -> 
         "DELETE FROM messages WHERE session_id = ?1 AND created_at >= ?2",
         params![session_id, from_created_at],
     )?;
+    Ok(())
+}
+
+// ── KV store ──────────────────────────────────────────────────────────────────
+
+// ── Agent operations ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct AgentRow {
+    pub id:           String,
+    pub name:         String,
+    pub description:  Option<String>,
+    pub model:        Option<String>,
+    pub provider:     Option<String>,
+    pub system:       Option<String>,
+    pub allowed_tools: Option<String>,
+    pub created_at:   i64,
+}
+
+pub fn list_agents(db: &Db) -> Result<Vec<AgentRow>> {
+    let conn = db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description, model, provider, system, allowed_tools, created_at
+         FROM agents ORDER BY created_at ASC"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(AgentRow {
+            id:            row.get(0)?,
+            name:          row.get(1)?,
+            description:   row.get(2)?,
+            model:         row.get(3)?,
+            provider:      row.get(4)?,
+            system:        row.get(5)?,
+            allowed_tools: row.get(6)?,
+            created_at:    row.get(7)?,
+        })
+    })?.filter_map(|r| r.ok()).collect();
+    Ok(rows)
+}
+
+pub fn insert_agent(db: &Db, agent: &AgentRow) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO agents (id, name, description, model, provider, system, allowed_tools, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![agent.id, agent.name, agent.description, agent.model,
+                agent.provider, agent.system, agent.allowed_tools, agent.created_at],
+    )?;
+    Ok(())
+}
+
+pub fn delete_agent(db: &Db, id: &str) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute("DELETE FROM agents WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+// ── Draft operations ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct DraftRow {
+    pub id:         String,
+    pub label:      String,
+    pub content:    String,
+    pub created_at: i64,
+}
+
+pub fn list_drafts(db: &Db) -> Result<Vec<DraftRow>> {
+    let conn = db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT id, label, content, created_at FROM drafts ORDER BY created_at DESC"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(DraftRow {
+            id:         row.get(0)?,
+            label:      row.get(1)?,
+            content:    row.get(2)?,
+            created_at: row.get(3)?,
+        })
+    })?.filter_map(|r| r.ok()).collect();
+    Ok(rows)
+}
+
+pub fn insert_draft(db: &Db, draft: &DraftRow) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO drafts (id, label, content, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![draft.id, draft.label, draft.content, draft.created_at],
+    )?;
+    Ok(())
+}
+
+pub fn delete_draft(db: &Db, id: &str) -> Result<()> {
+    let conn = db.lock().unwrap();
+    conn.execute("DELETE FROM drafts WHERE id = ?1", params![id])?;
     Ok(())
 }
 

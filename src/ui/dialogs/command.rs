@@ -29,6 +29,9 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
             Command { label: "Compact Session",  desc: "Summarize and compress history", shortcut: "" },
             Command { label: "Switch Model",     desc: "Choose a local model",           shortcut: "Ctrl+M" },
             Command { label: "Cycle Model Next", desc: "Next model in list",             shortcut: "Alt+M" },
+            Command { label: "Switch Agent",     desc: "Change agent mode (General/Build/Plan/Custom)", shortcut: "Ctrl+A" },
+            Command { label: "Stash Draft",      desc: "Save input to draft stash",      shortcut: "Ctrl+D" },
+            Command { label: "Pop Draft",        desc: "Restore a stashed draft",        shortcut: "Ctrl+Shift+D" },
             Command { label: "Open Folder",      desc: "Open a repo or directory",       shortcut: "Ctrl+O" },
         ],
         // ── Display / Settings ────────────────────────────────────────────────

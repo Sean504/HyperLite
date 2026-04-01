@@ -3,6 +3,8 @@ pub mod model_picker;
 pub mod help;
 pub mod command;
 pub mod theme_picker;
+pub mod agent_picker;
+pub mod draft_picker;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -14,12 +16,15 @@ use crate::app::{ActiveDialog, App};
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     match &app.active_dialog {
         ActiveDialog::None => {}
-        ActiveDialog::SessionList => session_list::render(frame, area, app),
-        ActiveDialog::ModelPicker  => model_picker::render(frame, area, app),
-        ActiveDialog::Help         => help::render(frame, area, app),
+        ActiveDialog::SessionList    => session_list::render(frame, area, app),
+        ActiveDialog::ModelPicker    => model_picker::render(frame, area, app),
+        ActiveDialog::Help           => help::render(frame, area, app),
         ActiveDialog::CommandPalette => command::render(frame, area, app),
-        ActiveDialog::ThemePicker  => theme_picker::render(frame, area, app),
-        ActiveDialog::FolderInput  => render_folder_input(frame, area, app),
+        ActiveDialog::ThemePicker    => theme_picker::render(frame, area, app),
+        ActiveDialog::FolderInput    => render_folder_input(frame, area, app),
+        ActiveDialog::AgentPicker    => agent_picker::render(frame, area, app),
+        ActiveDialog::AgentEditor    => agent_picker::render_editor(frame, area, app),
+        ActiveDialog::DraftPicker    => draft_picker::render(frame, area, app),
     }
 }
 
