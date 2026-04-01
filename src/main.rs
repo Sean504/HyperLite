@@ -81,7 +81,7 @@ async fn run_app() -> anyhow::Result<()> {
         .build()?;
 
     // ── Provider registry ─────────────────────────────────────────────────────
-    let registry = Arc::new(ProviderRegistry::with_defaults(http_client.clone()));
+    let registry = Arc::new(ProviderRegistry::with_defaults(http_client.clone(), hardware.clone()));
 
     // ── TUI setup — start immediately so we never show a blank terminal ───────
     enable_raw_mode()?;
@@ -251,6 +251,7 @@ async fn run_app() -> anyhow::Result<()> {
         model_dl_bytes_total: 0,
         model_dl_speed_bps:   0.0,
         model_refresh_pending: false,
+        stream_status:        String::new(),
     };
 
     // ── Run ───────────────────────────────────────────────────────────────────

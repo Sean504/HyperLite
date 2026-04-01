@@ -13,6 +13,7 @@ pub enum Event {
     Tick,
 
     // Streaming LLM response chunks
+    StreamStatus(String),   // transient phase label ("Starting server…", "Loading model…", "")
     StreamText(String),
     StreamReasoning(String),
     StreamToolStart { call_id: String, name: String },

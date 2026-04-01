@@ -26,6 +26,7 @@ use super::{
     openai_compat, BackendKind, ChatMessage, GenerationParams,
     LocalModel, LocalProvider, ModelFormat, StreamEvent,
 };
+use crate::hardware::HardwareInfo;
 
 /// Default directories to scan for model files
 const DEFAULT_MODEL_DIRS: &[&str] = &[
@@ -46,22 +47,18 @@ const MODEL_EXTENSIONS: &[&str] = &[
 pub struct DirectGgufProvider {
     client:      Client,
     model_dirs:  Vec<PathBuf>,
-    /// Active spawned process (base_url → process)
     active_port: u16,
+    hardware:    HardwareInfo,
 }
 
 impl DirectGgufProvider {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, hardware: HardwareInfo) -> Self {
         let model_dirs = DEFAULT_MODEL_DIRS
             .iter()
-            .filter_map(|dir| {
-                let expanded = expand_tilde(dir);
-                let path = PathBuf::from(&expanded);
-                if path.exists() { Some(path) } else { None }
-            })
+            .map(|dir| PathBuf::from(expand_tilde(dir)))
             .collect();
 
-        Self { client, model_dirs, active_port: 18080 }
+        Self { client, model_dirs, active_port: 18080, hardware }
     }
 
     pub fn with_model_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
@@ -73,7 +70,18 @@ impl DirectGgufProvider {
     pub fn scan_model_files(&self) -> Vec<LocalModel> {
         let mut models = vec![];
 
-        for dir in &self.model_dirs {
+        // Always include the canonical HyperLite models dir, even if it wasn't
+        // present when this provider was created.
+        let canonical = crate::startup::models_dir();
+        let extra = std::iter::once(&canonical);
+
+        let all_dirs: Vec<&PathBuf> = self.model_dirs.iter()
+            .chain(extra)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        for dir in all_dirs {
             for entry in WalkDir::new(dir)
                 .follow_links(true)
                 .max_depth(5)
@@ -139,7 +147,11 @@ impl DirectGgufProvider {
             .unwrap_or("")
             .to_lowercase();
 
-        // llamafile: run it directly
+        // llamafile: Cosmopolitan APE polyglot (PE+ELF+shell-script in one file).
+        // - Windows: native PE binary — run directly.
+        // - Linux/macOS: run via `sh` so the shell strips the PE header before exec,
+        //   bypassing WSL binfmt_misc (which would intercept the PE header and try to
+        //   run it under Wine/Windows, where Linux paths don't exist).
         if ext == "llamafile" {
             #[cfg(unix)]
             {
@@ -148,11 +160,22 @@ impl DirectGgufProvider {
                 perms.set_mode(perms.mode() | 0o755);
                 std::fs::set_permissions(path, perms)?;
             }
+
+            #[cfg(unix)]
+            return Ok(tokio::process::Command::new("sh")
+                .arg(path)
+                .arg("--port").arg(port.to_string())
+                .arg("--nobrowser")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?);
+
+            #[cfg(not(unix))]
             return Ok(tokio::process::Command::new(path)
                 .arg("--port").arg(port.to_string())
                 .arg("--nobrowser")
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
                 .spawn()?);
         }
 
@@ -175,16 +198,32 @@ impl DirectGgufProvider {
             .map(|n| n.starts_with("llamafile"))
             .unwrap_or(false);
 
+        // On Linux/macOS, run llamafile via `sh` to bypass WSL binfmt_misc PE interception.
+        // On Windows, llamafile is a native PE binary — run it directly.
+        #[cfg(unix)]
+        let mut cmd = if is_llamafile {
+            let mut c = tokio::process::Command::new("sh");
+            c.arg(&runtime_bin);
+            c
+        } else {
+            tokio::process::Command::new(&runtime_bin)
+        };
+        #[cfg(not(unix))]
         let mut cmd = tokio::process::Command::new(&runtime_bin);
+        // Derive runtime flags from detected hardware
+        let gpu_layers = if self.hardware.cpu_only { 0 } else { 99 };
+        let threads    = self.hardware.cpu.physical_cores.max(1).to_string();
+
         cmd.arg("--model").arg(path)
            .arg("--port").arg(port.to_string())
            .arg("--host").arg("127.0.0.1")
            .arg("--ctx-size").arg("4096")
-           .arg("--n-gpu-layers").arg("0")
+           .arg("--threads").arg(&threads)
+           .arg("--n-gpu-layers").arg(gpu_layers.to_string())
            .stdout(std::process::Stdio::null())
-           .stderr(std::process::Stdio::null());
+           .stderr(std::process::Stdio::piped());
         if is_llamafile {
-            cmd.arg("--server");
+            cmd.arg("--server").arg("--nobrowser");
         }
         Ok(cmd.spawn()?)
     }
@@ -241,14 +280,48 @@ impl LocalProvider for DirectGgufProvider {
             .unwrap_or(false);
 
         if !alive {
-            // Spawn the runtime — process runs independently after this returns
-            self.spawn_runtime(&path, port).await?;
+            let mut child = self.spawn_runtime(&path, port).await?;
 
             // Wait up to 90s for the server to become ready.
-            // llamafile/llama-server can take a while to memory-map a large model.
+            // Poll every 500ms; if the process exits early we surface its stderr immediately.
             let mut ready = false;
-            for i in 0..180 {
+            for _ in 0..180 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                // Check whether the process has already died
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Read whatever stderr the process wrote
+                        let mut err_text = String::new();
+                        if let Some(stderr) = child.stderr.take() {
+                            use tokio::io::AsyncReadExt;
+                            let mut buf = Vec::new();
+                            let mut reader = tokio::io::BufReader::new(stderr);
+                            let _ = reader.read_to_end(&mut buf).await;
+                            err_text = String::from_utf8_lossy(&buf).to_string();
+                        }
+                        // Surface the last few lines — most useful for diagnosing the crash
+                        let tail: String = err_text.lines()
+                            .filter(|l| !l.trim().is_empty())
+                            .rev().take(4)
+                            .collect::<Vec<_>>()
+                            .into_iter().rev()
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if tail.is_empty() {
+                            anyhow::bail!(
+                                "Inference runtime exited immediately (exit {}). \
+                                 Try running llamafile manually to see the error.",
+                                status
+                            );
+                        } else {
+                            anyhow::bail!("Inference runtime crashed:\n{}", tail);
+                        }
+                    }
+                    Ok(None) => {} // still running — continue polling
+                    Err(_)   => {} // can't determine status — keep going
+                }
+
                 // Try /health first; fall back to /v1/models (some builds differ)
                 let health_ok = self.client
                     .get(format!("{}/health", base_url))
@@ -269,17 +342,11 @@ impl LocalProvider for DirectGgufProvider {
                     ready = true;
                     break;
                 }
-                // After 10s without connection, assume process failed to start
-                if i == 20 {
-                    let _ = self.client.get(format!("{}/health", base_url))
-                        .send().await;  // one final probe
-                }
             }
             if !ready {
                 anyhow::bail!(
-                    "llamafile/llama-server did not start on {} within 90s. \
-                     The model may be too large for available memory.",
-                    base_url
+                    "Inference server did not become ready within 90s. \
+                     The model may be too large for available memory."
                 );
             }
         }

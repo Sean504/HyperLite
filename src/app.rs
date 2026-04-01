@@ -62,6 +62,7 @@ pub struct App {
     // Streaming
     pub streaming:      bool,
     pub streaming_buf:  String,
+    pub stream_status:  String,   // phase label shown in input border ("Starting server…", etc.)
     pub spinner:        Spinner,
     pub last_token_count: Option<u32>,
 
@@ -277,11 +278,19 @@ pub async fn run(
 /// Returns true if the app should quit.
 fn handle_internal_event(app: &mut App, ev: Event) -> bool {
     match ev {
+        Event::StreamStatus(s) => {
+            app.stream_status = s;
+        }
         Event::StreamText(text) => {
-            // Filter chat-template tokens that some models leak (e.g. Qwen2.5)
+            app.stream_status.clear();
+            // Filter chat-template tokens that models sometimes leak
             let filtered = text
-                .replace("<|im_end|>", "")
-                .replace("<|endoftext|>", "");
+                .replace("<|im_end|>", "")        // Qwen / Mistral
+                .replace("<|endoftext|>", "")      // GPT-2 style
+                .replace("<|eot_id|>", "")         // Llama-3
+                .replace("<|end_of_text|>", "")    // Llama-3
+                .replace("<|start_header_id|>", "") // Llama-3
+                .replace("<|end_header_id|>", ""); // Llama-3
             app.streaming_buf.push_str(&filtered);
 
             // Stop early if model generates the next user turn
@@ -324,6 +333,7 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
         }
         Event::StreamDone { duration_ms } => {
             app.streaming = false;
+            app.stream_status.clear();
             let raw = std::mem::take(&mut app.streaming_buf);
             if !raw.is_empty() {
                 // Normalize: unwrap any code-fence wrappers around <tool_call> blocks
@@ -376,6 +386,7 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
         Event::StreamError(err) => {
             app.streaming = false;
             app.streaming_buf.clear();
+            app.stream_status.clear();
             app.push_toast(crate::ui::components::toast::Toast::error(err));
         }
         Event::PermissionRequest(req) => {
@@ -898,18 +909,24 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                 let q = app.dialog_search_query.to_lowercase();
                 let entries: Vec<_> = crate::ui::dialogs::model_picker::DOWNLOADABLE.iter()
                     .filter(|e| q.is_empty()
-                        || e.display.to_lowercase().contains(&q)
-                        || e.name.contains(q.as_str()))
+                        || e.display.to_lowercase().contains(&q))
                     .collect();
                 if let Some(entry) = entries.get(app.dialog_selected_idx) {
-                    let already = app.available_models.iter()
-                        .any(|m| m.name.starts_with(entry.name.split(':').next().unwrap_or(entry.name)));
+                    let models_dir = dirs::home_dir()
+                        .map(|h| h.join(".hyperlite").join("models"))
+                        .unwrap_or_default();
+                    let already = models_dir.join(entry.hf_file).exists();
                     if already {
                         app.push_toast(crate::ui::components::toast::Toast::success(
                             format!("{} is already installed", entry.display)
                         ));
                     } else if app.model_dl_active.is_none() {
-                        start_model_download(app, entry.name.to_string());
+                        start_model_download(
+                            app,
+                            entry.hf_file.to_string(),
+                            entry.hf_url(),
+                            entry.display.to_string(),
+                        );
                     }
                 }
                 // Don't close — user can watch progress
@@ -1157,12 +1174,25 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
         .map(|m| m.backend.clone());
 
     if model_backend == Some(crate::providers::BackendKind::DirectGguf) {
-        let params = action_params(&text);
-        let client = http_client.clone();
+        let params   = action_params(&text);
+        let client   = http_client.clone();
+        let hardware = app.hardware.clone();
         tokio::spawn(async move {
-            let provider = crate::providers::direct::DirectGgufProvider::new(client);
+            // Quick probe to show a meaningful status label during server startup
+            let alive = client
+                .get("http://127.0.0.1:18080/health")
+                .timeout(std::time::Duration::from_millis(300))
+                .send().await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            if !alive {
+                let _ = tx.send(Event::StreamStatus("  Starting inference server…".to_string()));
+            }
+
+            let provider = crate::providers::direct::DirectGgufProvider::new(client, hardware);
             match crate::providers::LocalProvider::chat_stream(&provider, &chat, &model_id, &params).await {
                 Ok(mut rx) => {
+                    let _ = tx.send(Event::StreamStatus("  Generating…".to_string()));
                     let start = std::time::Instant::now();
                     while let Some(ev) = rx.recv().await {
                         match ev {
@@ -1409,11 +1439,24 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         .map(|m| m.backend.clone());
 
     if model_backend == Some(crate::providers::BackendKind::DirectGguf) {
-        let client = http_client.clone();
+        let client   = http_client.clone();
+        let hardware = app.hardware.clone();
         tokio::spawn(async move {
-            let provider = crate::providers::direct::DirectGgufProvider::new(client);
+            // Server should already be up from initial message, but show status just in case
+            let alive = client
+                .get("http://127.0.0.1:18080/health")
+                .timeout(std::time::Duration::from_millis(300))
+                .send().await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            if !alive {
+                let _ = tx.send(Event::StreamStatus("  Starting inference server…".to_string()));
+            }
+
+            let provider = crate::providers::direct::DirectGgufProvider::new(client, hardware);
             match crate::providers::LocalProvider::chat_stream(&provider, &chat, &model_id, &params).await {
                 Ok(mut rx) => {
+                    let _ = tx.send(Event::StreamStatus("  Generating…".to_string()));
                     let start = std::time::Instant::now();
                     while let Some(ev) = rx.recv().await {
                         match ev {
@@ -1780,61 +1823,94 @@ fn copy_last_message(app: &mut App) {
 }
 
 /// Spawn a background task to download `model` via Ollama's /api/pull.
+/// Download a GGUF model file directly from HuggingFace to ~/.hyperlite/models/.
 /// Progress events arrive via `app.event_tx` as `Event::ModelDownload*`.
-fn start_model_download(app: &mut App, model: String) {
-    app.model_dl_active      = Some(model.clone());
+fn start_model_download(app: &mut App, filename: String, url: String, display: String) {
+    app.model_dl_active      = Some(filename.clone());
     app.model_dl_bytes_done  = 0;
     app.model_dl_bytes_total = 0;
     app.model_dl_speed_bps   = 0.0;
 
     let client = app.http_client.clone();
     let tx     = app.event_tx.clone();
-    let url    = "http://localhost:11434/api/pull".to_string();
 
     tokio::spawn(async move {
-        let body = serde_json::json!({ "name": model, "stream": true });
-        let resp = match client.post(&url).json(&body).send().await {
-            Ok(r)  => r,
+        use tokio::io::AsyncWriteExt;
+        use futures::StreamExt;
+
+        // Ensure the models directory exists
+        let models_dir = match dirs::home_dir() {
+            Some(h) => h.join(".hyperlite").join("models"),
+            None => {
+                let _ = tx.send(Event::ModelDownloadFailed {
+                    model: display, error: "Could not determine home directory".to_string()
+                });
+                return;
+            }
+        };
+        if let Err(e) = tokio::fs::create_dir_all(&models_dir).await {
+            let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
+            return;
+        }
+
+        let dest = models_dir.join(&filename);
+        let tmp  = models_dir.join(format!("{}.part", filename));
+
+        // Stream the download
+        let resp = match client.get(&url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                let _ = tx.send(Event::ModelDownloadFailed {
+                    model: display, error: format!("HTTP {}", r.status())
+                });
+                return;
+            }
             Err(e) => {
-                let _ = tx.send(Event::ModelDownloadFailed { model, error: e.to_string() });
+                let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
                 return;
             }
         };
 
-        use futures::StreamExt;
+        let total = resp.content_length().unwrap_or(0);
+        let mut file = match tokio::fs::File::create(&tmp).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
+                return;
+            }
+        };
+
         let mut stream = resp.bytes_stream();
-        let mut buf    = String::new();
+        let mut done   = 0u64;
 
         while let Some(chunk) = stream.next().await {
             let chunk = match chunk {
                 Ok(c)  => c,
                 Err(e) => {
-                    let _ = tx.send(Event::ModelDownloadFailed { model, error: e.to_string() });
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
                     return;
                 }
             };
-            buf.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(pos) = buf.find('\n') {
-                let line = buf[..pos].trim().to_string();
-                buf.drain(..=pos);
-                if line.is_empty() { continue; }
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                    let status    = v["status"].as_str().unwrap_or("").to_string();
-                    let total     = v["total"].as_u64().unwrap_or(0);
-                    let completed = v["completed"].as_u64().unwrap_or(0);
-                    if total > 0 {
-                        let _ = tx.send(Event::ModelDownloadProgress {
-                            model: model.clone(), bytes_done: completed, bytes_total: total
-                        });
-                    }
-                    if status == "success" {
-                        let _ = tx.send(Event::ModelDownloadDone { model });
-                        return;
-                    }
-                }
+            if let Err(e) = file.write_all(&chunk).await {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
+                return;
             }
+            done += chunk.len() as u64;
+            let _ = tx.send(Event::ModelDownloadProgress {
+                model: filename.clone(), bytes_done: done, bytes_total: total
+            });
         }
-        let _ = tx.send(Event::ModelDownloadDone { model });
+
+        drop(file);
+        // Atomically move .part → final file
+        if let Err(e) = tokio::fs::rename(&tmp, &dest).await {
+            let _ = tx.send(Event::ModelDownloadFailed { model: display, error: e.to_string() });
+            return;
+        }
+
+        let _ = tx.send(Event::ModelDownloadDone { model: display });
     });
 }
 

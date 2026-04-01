@@ -371,7 +371,7 @@ impl ProviderRegistry {
 
     /// Register all default local backends with their standard ports.
     /// Backends that aren't running will show as offline — no error.
-    pub fn with_defaults(client: reqwest::Client) -> Self {
+    pub fn with_defaults(client: reqwest::Client, hardware: crate::hardware::HardwareInfo) -> Self {
         use crate::providers::*;
         let mut reg = Self::new();
 
@@ -399,7 +399,7 @@ impl ProviderRegistry {
         reg.add(Box::new(gpt4all::Gpt4AllProvider::new(
             client.clone(), "http://localhost:4891",
         )));
-        reg.add(Box::new(direct::DirectGgufProvider::new(client.clone())));
+        reg.add(Box::new(direct::DirectGgufProvider::new(client.clone(), hardware)));
 
         reg
     }

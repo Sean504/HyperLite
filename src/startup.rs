@@ -131,7 +131,7 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
     RecommendedModel {
         display: "Phi-4 Mini 3.8B",
         desc:    "Microsoft's punchy small model. Great reasoning.",
-        hf_repo: "bartowski/Phi-4-mini-instruct-GGUF",
+        hf_repo: "unsloth/Phi-4-mini-instruct-GGUF",
         hf_file: "Phi-4-mini-instruct-Q4_K_M.gguf",
         vram_mb: 2500, ram_mb: 6000, tags: &["Coding", "Reasoning"],
     },
@@ -173,8 +173,8 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
     RecommendedModel {
         display: "Qwen2.5 14B",
         desc:    "Great balance of capability and size.",
-        hf_repo: "Qwen/Qwen2.5-14B-Instruct-GGUF",
-        hf_file: "qwen2.5-14b-instruct-q4_k_m.gguf",
+        hf_repo: "bartowski/Qwen2.5-14B-Instruct-GGUF",
+        hf_file: "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
         vram_mb: 10000, ram_mb: 20000, tags: &["Writing", "Reasoning"],
     },
     RecommendedModel {
@@ -194,8 +194,8 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
     RecommendedModel {
         display: "Qwen2.5 32B",
         desc:    "Frontier-level quality for high-end GPUs.",
-        hf_repo: "Qwen/Qwen2.5-32B-Instruct-GGUF",
-        hf_file: "qwen2.5-32b-instruct-q4_k_m.gguf",
+        hf_repo: "bartowski/Qwen2.5-32B-Instruct-GGUF",
+        hf_file: "Qwen2.5-32B-Instruct-Q4_K_M.gguf",
         vram_mb: 22000, ram_mb: 40000, tags: &["Writing", "Reasoning"],
     },
     RecommendedModel {

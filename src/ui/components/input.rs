@@ -25,11 +25,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.theme.border_hi
     };
 
-    // Title — generating spinner OR static "message" label
+    // Title — streaming phase label, spinner, or static "message" label
     let title_left = if is_streaming {
+        let label = if !app.stream_status.is_empty() {
+            format!(" {} {} ", app.spinner.current(), app.stream_status.trim())
+        } else {
+            format!(" {} generating… ", app.spinner.current())
+        };
         Line::from(vec![
             Span::styled(
-                format!(" {} generating… ", app.spinner.current()),
+                label,
                 Style::default().fg(app.theme.warning).add_modifier(Modifier::BOLD),
             ),
         ])

@@ -12,26 +12,33 @@ use super::centered_rect;
 const TABS: &[&str] = &["All", "Recommended", "By Backend", "Download"];
 
 pub struct DownloadEntry {
-    pub name:    &'static str,
     pub display: &'static str,
     pub desc:    &'static str,
     pub size_gb: f32,
+    pub hf_repo: &'static str,
+    pub hf_file: &'static str,   // filename saved to ~/.hyperlite/models/
+}
+
+impl DownloadEntry {
+    pub fn hf_url(&self) -> String {
+        format!("https://huggingface.co/{}/resolve/main/{}", self.hf_repo, self.hf_file)
+    }
 }
 
 pub const DOWNLOADABLE: &[DownloadEntry] = &[
-    DownloadEntry { name: "smollm2:1.7b",       display: "SmolLM2 1.7B",        desc: "Tiny but capable. Runs anywhere.",                  size_gb: 1.0  },
-    DownloadEntry { name: "phi4-mini",           display: "Phi-4 Mini 3.8B",      desc: "Microsoft's punchy small model. Great reasoning.",   size_gb: 2.5  },
-    DownloadEntry { name: "qwen2.5:3b",          display: "Qwen2.5 3B",           desc: "Alibaba multilingual workhorse.",                    size_gb: 2.0  },
-    DownloadEntry { name: "llama3.2:3b",         display: "Llama 3.2 3B",         desc: "Meta's small Llama. Solid all-rounder.",             size_gb: 2.0  },
-    DownloadEntry { name: "qwen2.5-coder:7b",    display: "Qwen2.5-Coder 7B",     desc: "Best-in-class code model at 7B.",                   size_gb: 4.7  },
-    DownloadEntry { name: "mistral:7b",          display: "Mistral 7B",           desc: "Fast and strong general-purpose.",                   size_gb: 4.1  },
-    DownloadEntry { name: "llama3.1:8b",         display: "Llama 3.1 8B",         desc: "Meta's flagship 8B. Excellent instruction following.", size_gb: 4.7 },
-    DownloadEntry { name: "qwen2.5:14b",         display: "Qwen2.5 14B",          desc: "Great balance of capability and size.",              size_gb: 9.0  },
-    DownloadEntry { name: "deepseek-r1:14b",     display: "DeepSeek-R1 14B",      desc: "Chain-of-thought reasoning model.",                  size_gb: 9.0  },
-    DownloadEntry { name: "qwen2.5-coder:14b",   display: "Qwen2.5-Coder 14B",    desc: "Top coding model for mid-range GPUs.",               size_gb: 9.0  },
-    DownloadEntry { name: "qwen2.5:32b",         display: "Qwen2.5 32B",          desc: "Frontier-level quality for high-end GPUs.",          size_gb: 20.0 },
-    DownloadEntry { name: "deepseek-r1:32b",     display: "DeepSeek-R1 32B",      desc: "Best open reasoning model.",                         size_gb: 20.0 },
-    DownloadEntry { name: "llama3.3:70b",        display: "Llama 3.3 70B",        desc: "Near-frontier. Needs 40 GB+ VRAM or large RAM.",     size_gb: 43.0 },
+    DownloadEntry { display: "SmolLM2 1.7B",        desc: "Tiny but capable. Runs anywhere.",                    size_gb: 1.0,  hf_repo: "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",         hf_file: "smollm2-1.7b-instruct-q4_k_m.gguf"           },
+    DownloadEntry { display: "Phi-4 Mini 3.8B",      desc: "Microsoft's punchy small model. Great reasoning.",    size_gb: 2.5,  hf_repo: "unsloth/Phi-4-mini-instruct-GGUF",                  hf_file: "Phi-4-mini-instruct-Q4_K_M.gguf"              },
+    DownloadEntry { display: "Qwen2.5 3B",           desc: "Alibaba multilingual workhorse.",                     size_gb: 2.0,  hf_repo: "Qwen/Qwen2.5-3B-Instruct-GGUF",                    hf_file: "qwen2.5-3b-instruct-q4_k_m.gguf"             },
+    DownloadEntry { display: "Llama 3.2 3B",         desc: "Meta's small Llama. Solid all-rounder.",              size_gb: 2.0,  hf_repo: "bartowski/Llama-3.2-3B-Instruct-GGUF",             hf_file: "Llama-3.2-3B-Instruct-Q4_K_M.gguf"           },
+    DownloadEntry { display: "Qwen2.5-Coder 7B",     desc: "Best-in-class code model at 7B.",                     size_gb: 4.7,  hf_repo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",             hf_file: "qwen2.5-coder-7b-instruct-q4_k_m.gguf"       },
+    DownloadEntry { display: "Mistral 7B",           desc: "Fast and strong general-purpose.",                    size_gb: 4.1,  hf_repo: "bartowski/Mistral-7B-Instruct-v0.3-GGUF",          hf_file: "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"        },
+    DownloadEntry { display: "Llama 3.1 8B",         desc: "Meta's flagship 8B. Excellent instruction following.", size_gb: 4.7, hf_repo: "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",        hf_file: "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"      },
+    DownloadEntry { display: "Qwen2.5 14B",          desc: "Great balance of capability and size.",               size_gb: 9.0,  hf_repo: "bartowski/Qwen2.5-14B-Instruct-GGUF",             hf_file: "Qwen2.5-14B-Instruct-Q4_K_M.gguf"            },
+    DownloadEntry { display: "DeepSeek-R1 14B",      desc: "Chain-of-thought reasoning model.",                   size_gb: 9.0,  hf_repo: "bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF",     hf_file: "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf"    },
+    DownloadEntry { display: "Qwen2.5-Coder 14B",    desc: "Top coding model for mid-range GPUs.",                size_gb: 9.0,  hf_repo: "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",            hf_file: "qwen2.5-coder-14b-instruct-q4_k_m.gguf"      },
+    DownloadEntry { display: "Qwen2.5 32B",          desc: "Frontier-level quality for high-end GPUs.",           size_gb: 20.0, hf_repo: "bartowski/Qwen2.5-32B-Instruct-GGUF",             hf_file: "Qwen2.5-32B-Instruct-Q4_K_M.gguf"            },
+    DownloadEntry { display: "DeepSeek-R1 32B",      desc: "Best open reasoning model.",                          size_gb: 20.0, hf_repo: "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF",     hf_file: "DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf"    },
+    DownloadEntry { display: "Llama 3.3 70B",        desc: "Near-frontier. Needs 40 GB+ VRAM or large RAM.",      size_gb: 43.0, hf_repo: "bartowski/Llama-3.3-70B-Instruct-GGUF",           hf_file: "Llama-3.3-70B-Instruct-Q4_K_M.gguf"          },
 ];
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -177,24 +184,24 @@ fn render_download_tab(frame: &mut Frame, chunks: &[Rect], app: &mut App) {
         frame.render_widget(hint_block, chunks[1]);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" Select a model and press Enter to download via Ollama", Style::default().fg(muted)),
+                Span::styled(" Select a model and press Enter to download", Style::default().fg(muted)),
             ])),
             hint_inner,
         );
     }
 
     // chunks[2]: list of downloadable models
+    let models_dir = dirs::home_dir()
+        .map(|h| h.join(".hyperlite").join("models"))
+        .unwrap_or_default();
     let q = app.dialog_search_query.to_lowercase();
     let entries: Vec<&DownloadEntry> = DOWNLOADABLE.iter()
-        .filter(|e| q.is_empty()
-            || e.display.to_lowercase().contains(&q)
-            || e.name.contains(q.as_str()))
+        .filter(|e| q.is_empty() || e.display.to_lowercase().contains(&q))
         .collect();
 
     let items: Vec<ListItem> = entries.iter().map(|e| {
-        let installed = app.available_models.iter()
-            .any(|m| m.name.starts_with(e.name.split(':').next().unwrap_or(e.name)));
-        let downloading = app.model_dl_active.as_deref() == Some(e.name);
+        let installed = models_dir.join(e.hf_file).exists();
+        let downloading = app.model_dl_active.as_deref() == Some(e.hf_file);
         let (marker, color) = if downloading {
             ("⬇ ", teal)
         } else if installed {
