@@ -39,16 +39,18 @@ pub fn read_file(params: &Value, cwd: &Path) -> Result<String> {
     }
 
     let content = std::fs::read_to_string(&path)?;
+    let total_lines = content.lines().count();
 
     // Optional line range
     let start = params.get("start_line").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
     let end   = params.get("end_line").and_then(|v| v.as_u64());
+    let max_lines = params.get("max_lines").and_then(|v| v.as_u64()).unwrap_or(300) as usize;
+
+    let lines: Vec<&str> = content.lines().collect();
 
     if start > 1 || end.is_some() {
-        let lines: Vec<&str> = content.lines().collect();
         let from = start.saturating_sub(1);
-        let to   = end.map(|e| e as usize).unwrap_or(lines.len());
-        let to   = to.min(lines.len());
+        let to   = end.map(|e| e as usize).unwrap_or(lines.len()).min(lines.len());
         let selected: Vec<String> = lines[from..to]
             .iter()
             .enumerate()
@@ -57,16 +59,85 @@ pub fn read_file(params: &Value, cwd: &Path) -> Result<String> {
         return Ok(selected.join("\n"));
     }
 
-    // Add line numbers for large files
-    if content.lines().count() > 50 {
-        let numbered: Vec<String> = content.lines()
-            .enumerate()
-            .map(|(i, l)| format!("{:4} | {}", i + 1, l))
-            .collect();
-        return Ok(numbered.join("\n"));
+    // Apply line cap
+    let cap = max_lines.min(lines.len());
+    let truncated = cap < lines.len();
+    let numbered: Vec<String> = lines[..cap]
+        .iter()
+        .enumerate()
+        .map(|(i, l)| format!("{:4} | {}", i + 1, l))
+        .collect();
+
+    let mut out = if truncated {
+        format!(
+            "[{} lines total — showing 1-{}. Use start_line/end_line to read more.]\n",
+            total_lines, cap
+        )
+    } else {
+        String::new()
+    };
+    out.push_str(&numbered.join("\n"));
+    Ok(out)
+}
+
+/// Read multiple files at once — each capped at 80 lines for scanning.
+/// Useful for quickly surveying many files in a codebase.
+pub fn batch_read(params: &Value, cwd: &Path) -> Result<String> {
+    let paths = params.get("paths").and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("batch_read: 'paths' array required"))?;
+
+    if paths.is_empty() {
+        anyhow::bail!("batch_read: at least one path required");
+    }
+    if paths.len() > 20 {
+        anyhow::bail!("batch_read: maximum 20 files per call");
     }
 
-    Ok(content)
+    let per_file_cap: usize = params.get("lines_per_file")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(80) as usize;
+
+    let mut out = String::new();
+
+    for path_val in paths {
+        let path_str = match path_val.as_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        let path = resolve(cwd, path_str);
+        out.push_str(&format!("\n━━━ {} ━━━\n", path_str));
+
+        if !path.exists() {
+            out.push_str("(not found)\n");
+            continue;
+        }
+        if path.is_dir() {
+            out.push_str("(directory — use list_dir or tree)\n");
+            continue;
+        }
+
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                let total = content.lines().count();
+                let cap   = per_file_cap.min(total);
+                let lines: Vec<String> = content.lines()
+                    .take(cap)
+                    .enumerate()
+                    .map(|(i, l)| format!("{:4} | {}", i + 1, l))
+                    .collect();
+                if cap < total {
+                    out.push_str(&format!("[{} lines total — showing 1-{}]\n", total, cap));
+                }
+                out.push_str(&lines.join("\n"));
+                out.push('\n');
+            }
+            Err(e) => {
+                out.push_str(&format!("(error reading: {})\n", e));
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 pub fn write_file(params: &Value, cwd: &Path) -> Result<String> {

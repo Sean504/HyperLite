@@ -52,8 +52,14 @@ pub static ALL_TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name:        "read_file",
-        description: "Read the contents of a file. Returns the file content as text.",
-        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"File path to read"}, "start_line":{"type":"integer"}, "end_line":{"type":"integer"}},"required":["path"]}"#,
+        description: "Read the contents of a file. Capped at 300 lines by default — use start_line/end_line to read specific sections, or max_lines to change the cap.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"File path to read"},"start_line":{"type":"integer"},"end_line":{"type":"integer"},"max_lines":{"type":"integer","description":"Max lines to return (default 300)"}},"required":["path"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "batch_read",
+        description: "Read multiple files at once, each capped at 80 lines. Use this to quickly scan many files during codebase exploration. Pass up to 20 paths at a time.",
+        parameters:  r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"},"description":"List of file paths to read"},"lines_per_file":{"type":"integer","description":"Lines to show per file (default 80)"}},"required":["paths"]}"#,
         requires_permission: false,
     },
     ToolDef {
@@ -298,13 +304,25 @@ Fetch a URL (docs, APIs, etc.).
 
 ---
 
+## Codebase Exploration
+
+When asked to analyze, summarize, or understand a codebase:
+1. Call `tree` first to map the structure (max_depth: 4)
+2. Call `make_plan` listing every file/area to examine
+3. Use `batch_read` to scan 5-20 files at once (80 lines each)
+4. Use `read_file` with start_line/end_line for files needing deeper analysis
+5. Use `grep` to find patterns across the codebase
+6. For 20+ file codebases, save running notes with `write_file` to a temp `_analysis_notes.md`
+7. Deliver the full summary only after all planned files are read
+
+---
+
 ## Coding Guidelines
 
 - **Read before editing** — always read a file's current content before making changes
-- **Explore first** — use `list_dir` and `glob` to understand the project structure before diving in
+- **Explore first** — use `tree`, `list_dir`, and `glob` to understand project structure
 - **Verify after edits** — read the file back to confirm your changes applied correctly
 - **Build and test** — after making code changes, run `shell` to build/test and fix any errors
-- **Explain your work** — describe what you're doing and why before executing tools
 - **Targeted edits** — use `edit_file` for small changes, `write_file` only when creating or fully replacing
 - **Handle errors** — if a tool returns an error, diagnose and fix it rather than giving up
 "#);
@@ -338,7 +356,7 @@ pub static BUILTIN_AGENTS: &[BuiltinAgent] = &[
         id:          "plan",
         name:        "Plan",
         description: "Read-only exploration agent. Can read and search files but will ask before writing or running commands.",
-        allowed_tools: Some(&["make_plan", "read_file", "list_dir", "tree", "grep", "glob", "file_info", "search", "http_fetch"]),
+        allowed_tools: Some(&["make_plan", "read_file", "batch_read", "list_dir", "tree", "grep", "glob", "file_info", "search", "http_fetch"]),
     },
 ];
 
@@ -452,6 +470,26 @@ This ensures every step is informed by the actual result of the previous step.
     }
 
     out.push_str(r#"---
+
+## Codebase Exploration
+
+When asked to analyze, summarize, or understand a codebase, follow this systematic process:
+
+1. **Map first** — call `tree` (max_depth: 4) to see the full structure before reading anything
+2. **Plan explicitly** — call `make_plan` with every file or area you intend to examine, so progress is tracked
+3. **Scan broadly with batch_read** — use `batch_read` to read 5-20 small/medium files at once (each shown at 80 lines). Prioritize entry points: main.rs, index.ts, app.py, package.json, Cargo.toml, README, etc.
+4. **Dive deeper with read_file** — for files that need full detail, call `read_file` with `start_line`/`end_line` to read specific sections
+5. **Search for patterns** — use `grep` to find how key symbols, functions, or patterns are used across the whole codebase
+6. **Track findings** — for large codebases (20+ files), use `write_file` to save running notes to a temp file (e.g., `_analysis_notes.md`) so you don't lose context. Update it as you go.
+7. **Summarize after all reads** — only write the final summary once all planned files are read
+
+Key rules:
+- `read_file` is capped at 300 lines by default. If a file is truncated, use `start_line`/`end_line` to read remaining sections.
+- `batch_read` is capped at 80 lines per file — best for scanning, not deep analysis
+- Use `glob` to find all files of a type: `{"pattern": "**/*.rs"}` or `{"pattern": "**/*.ts"}`
+- When summarizing, cover: purpose, architecture, key modules/files, important patterns, dependencies
+
+---
 
 ## Coding Guidelines
 
@@ -814,6 +852,7 @@ pub async fn execute(
         "make_plan"  => files::make_plan(&call.parameters),
         "search"     => search::execute(&call.parameters).await,
         "read_file"  => files::read_file(&call.parameters, cwd),
+        "batch_read" => files::batch_read(&call.parameters, cwd),
         "write_file" => files::write_file(&call.parameters, cwd),
         "edit_file"  => files::edit_file(&call.parameters, cwd),
         "list_dir"   => files::list_dir(&call.parameters, cwd),
