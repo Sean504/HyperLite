@@ -124,6 +124,8 @@ pub struct App {
     // Active multi-step plan declared by make_plan tool
     pub active_plan:  Vec<String>,
     pub plan_step:    usize,
+    // Rolling history of recent tool calls for sidebar display: (name, is_error)
+    pub tool_history: Vec<(String, bool)>,
 
     // Agent system
     pub current_agent:   String,             // "general" | "build" | "plan" | custom id
@@ -1085,6 +1087,7 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     app.tool_enforcer_pending = false;
     app.active_plan.clear();
     app.plan_step = 0;
+    app.tool_history.clear();
     app.undo_stack.clear(); // new message invalidates redo history
 
     // Build system prompt with full tool documentation
@@ -1282,6 +1285,16 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
                     .filter_map(|s| s.as_str().map(|t| t.to_string()))
                     .collect();
                 app.plan_step = 0;
+                // Clear history when a new plan starts
+                app.tool_history.clear();
+            }
+        }
+
+        // Record in rolling tool history (skip make_plan itself — the plan panel handles it)
+        if call.name != "make_plan" {
+            app.tool_history.push((call.name.clone(), status == "error"));
+            if app.tool_history.len() > 12 {
+                app.tool_history.remove(0);
             }
         }
 

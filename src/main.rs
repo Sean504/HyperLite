@@ -247,6 +247,7 @@ async fn run_app() -> anyhow::Result<()> {
         tool_enforcer_pending: false,
         active_plan:     Vec::new(),
         plan_step:       0,
+        tool_history:    Vec::new(),
 
         current_agent:   "general".to_string(),
         custom_agents,
