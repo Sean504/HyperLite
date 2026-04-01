@@ -1,6 +1,6 @@
 {
   "name": "@hyperlite-ai/darwin-x64",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HyperLite binary for macOS Intel",
   "os": ["darwin"],
   "cpu": ["x64"],
