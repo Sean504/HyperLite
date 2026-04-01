@@ -1117,7 +1117,8 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     let tx          = app.event_tx.clone();
     let http_client = app.http_client.clone();
 
-    // ── Native inference path (zero HTTP overhead) ────────────────────────────
+    // ── Native in-process inference (only when feature is compiled in) ──────────
+    #[cfg(feature = "native-inference")]
     if model_id.starts_with("native:") {
         let native_models = crate::providers::native::discover_models();
         if let Some(nm) = native_models.iter().find(|m| m.id == model_id) {
@@ -1139,7 +1140,6 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
                             break;
                         }
                         StreamEvent::Error(e) => {
-                            // Fallback notice — will drop to HTTP path on next send
                             let _ = tx.send(Event::StreamError(e));
                             break;
                         }
@@ -1149,6 +1149,41 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
             });
             return Ok(());
         }
+    }
+
+    // ── DirectGguf path — spawn llama-server for the model file ─────────────
+    let model_backend = app.available_models.iter()
+        .find(|m| m.id == model_id)
+        .map(|m| m.backend.clone());
+
+    if model_backend == Some(crate::providers::BackendKind::DirectGguf) {
+        let params = action_params(&text);
+        let client = http_client.clone();
+        tokio::spawn(async move {
+            let provider = crate::providers::direct::DirectGgufProvider::new(client);
+            match crate::providers::LocalProvider::chat_stream(&provider, &chat, &model_id, &params).await {
+                Ok(mut rx) => {
+                    let start = std::time::Instant::now();
+                    while let Some(ev) = rx.recv().await {
+                        match ev {
+                            StreamEvent::Text(t)      => { let _ = tx.send(Event::StreamText(t)); }
+                            StreamEvent::Reasoning(r) => { let _ = tx.send(Event::StreamReasoning(r)); }
+                            StreamEvent::Done { .. } => {
+                                let ms = start.elapsed().as_millis() as u64;
+                                let _ = tx.send(Event::StreamDone { duration_ms: ms });
+                                break;
+                            }
+                            StreamEvent::Error(e) => {
+                                let _ = tx.send(Event::StreamError(e));
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => { let _ = tx.send(Event::StreamError(e.to_string())); }
+            }
+        });
+        return Ok(());
     }
 
     // ── HTTP path ────────────────────────────────────────────────────────────
@@ -1361,6 +1396,47 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
     let tx          = app.event_tx.clone();
     let http_client = app.http_client.clone();
 
+    // Keep low temperature and stop sequences for the follow-up turn
+    let last_user_text = app.messages.iter().rev()
+        .find(|m| m.role == Role::User && !m.text_content().starts_with("<tool_result>"))
+        .map(|m| m.text_content())
+        .unwrap_or_default();
+    let params = action_params(&last_user_text);
+
+    // DirectGguf path for tool follow-ups
+    let model_backend = app.available_models.iter()
+        .find(|m| m.id == model_id)
+        .map(|m| m.backend.clone());
+
+    if model_backend == Some(crate::providers::BackendKind::DirectGguf) {
+        let client = http_client.clone();
+        tokio::spawn(async move {
+            let provider = crate::providers::direct::DirectGgufProvider::new(client);
+            match crate::providers::LocalProvider::chat_stream(&provider, &chat, &model_id, &params).await {
+                Ok(mut rx) => {
+                    let start = std::time::Instant::now();
+                    while let Some(ev) = rx.recv().await {
+                        match ev {
+                            StreamEvent::Text(t)      => { let _ = tx.send(Event::StreamText(t)); }
+                            StreamEvent::Reasoning(r) => { let _ = tx.send(Event::StreamReasoning(r)); }
+                            StreamEvent::Done { .. } => {
+                                let ms = start.elapsed().as_millis() as u64;
+                                let _ = tx.send(Event::StreamDone { duration_ms: ms });
+                                break;
+                            }
+                            StreamEvent::Error(e) => {
+                                let _ = tx.send(Event::StreamError(e));
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => { let _ = tx.send(Event::StreamError(e.to_string())); }
+            }
+        });
+        return Ok(());
+    }
+
     let base_url = app.provider_registry
         .find_for_model(&model_id)
         .map(|p| p.base_url().to_string())
@@ -1371,13 +1447,6 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         app.push_toast(crate::ui::components::toast::Toast::error("No backend for follow-up"));
         return Ok(());
     }
-
-    // Keep low temperature and stop sequences for the follow-up turn
-    let last_user_text = app.messages.iter().rev()
-        .find(|m| m.role == Role::User && !m.text_content().starts_with("<tool_result>"))
-        .map(|m| m.text_content())
-        .unwrap_or_default();
-    let params = action_params(&last_user_text);
 
     tokio::spawn(async move {
         match crate::providers::openai_compat::stream_chat(

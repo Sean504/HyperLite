@@ -4,7 +4,7 @@
 /// No cloud APIs — fully offline, fully private.
 ///
 /// Backends supported:
-///   • Ollama          (GGUF)                    localhost:11434
+///   • Native GGUF     (direct llama.cpp, ~/.hyperlite/models/)
 ///   • llama.cpp       (GGUF, GGML legacy)       localhost:8080
 ///   • LM Studio       (GGUF, EXL2)              localhost:1234
 ///   • KoboldCpp       (GGUF, GGML, legacy)      localhost:5001
@@ -22,7 +22,6 @@
 
 pub mod openai_compat;
 pub mod native;
-pub mod ollama;
 pub mod llamacpp;
 pub mod kobold;
 pub mod lmstudio;
@@ -104,7 +103,7 @@ impl ModelFormat {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BackendKind {
-    Ollama,
+    Native,        // direct GGUF load from ~/.hyperlite/models/ (no HTTP)
     LlamaCpp,
     LmStudio,
     KoboldCpp,
@@ -116,13 +115,12 @@ pub enum BackendKind {
     Gpt4All,
     DirectGguf,
     OpenAICompat,  // generic fallback
-    OllamaNative,  // direct GGUF load from Ollama blob store (no HTTP)
 }
 
 impl BackendKind {
     pub fn display_name(&self) -> &'static str {
         match self {
-            BackendKind::Ollama        => "local",
+            BackendKind::Native        => "Native (llama.cpp)",
             BackendKind::LlamaCpp      => "llama.cpp",
             BackendKind::LmStudio      => "LM Studio",
             BackendKind::KoboldCpp     => "KoboldCpp",
@@ -134,14 +132,13 @@ impl BackendKind {
             BackendKind::Gpt4All       => "GPT4All",
             BackendKind::DirectGguf    => "Direct GGUF",
             BackendKind::OpenAICompat  => "OpenAI-compat",
-            BackendKind::OllamaNative  => "Native (llama.cpp)",
         }
     }
 
     /// Default port for this backend
     pub fn default_port(&self) -> u16 {
         match self {
-            BackendKind::Ollama        => 11434,
+            BackendKind::Native        => 0,  // no port — in-process
             BackendKind::LlamaCpp      => 8080,
             BackendKind::LmStudio      => 1234,
             BackendKind::KoboldCpp     => 5001,
@@ -153,14 +150,13 @@ impl BackendKind {
             BackendKind::Gpt4All       => 4891,
             BackendKind::DirectGguf    => 8080,
             BackendKind::OpenAICompat  => 8080,
-            BackendKind::OllamaNative  => 0,  // no port — in-process
         }
     }
 
     /// Which model formats this backend can serve
     pub fn supported_formats(&self) -> Vec<ModelFormat> {
         match self {
-            BackendKind::Ollama => vec![
+            BackendKind::Native => vec![
                 ModelFormat::Gguf,
             ],
             BackendKind::LlamaCpp => vec![
@@ -212,7 +208,6 @@ impl BackendKind {
                 ModelFormat::GgmlLegacy,
             ],
             BackendKind::OpenAICompat  => vec![ModelFormat::Unknown],
-            BackendKind::OllamaNative  => vec![ModelFormat::Gguf],
         }
     }
 }
@@ -380,9 +375,6 @@ impl ProviderRegistry {
         use crate::providers::*;
         let mut reg = Self::new();
 
-        reg.add(Box::new(ollama::OllamaProvider::new(
-            client.clone(), "http://localhost:11434",
-        )));
         reg.add(Box::new(llamacpp::LlamaCppProvider::new(
             client.clone(), "http://localhost:8080",
         )));
@@ -453,7 +445,7 @@ impl ProviderRegistry {
     }
 
     /// List all models across all reachable backends, including any GGUF files
-    /// discovered in the Ollama blob store for native (zero-HTTP) inference.
+    /// found in ~/.hyperlite/models/ for native (zero-HTTP) inference.
     pub async fn all_models(&self) -> Vec<LocalModel> {
         use futures::future::join_all;
 
@@ -467,18 +459,22 @@ impl ProviderRegistry {
 
         let mut models: Vec<LocalModel> = join_all(futures).await.into_iter().flatten().collect();
 
-        // Prepend native models (loaded directly from disk) — they're strictly
-        // faster so they go first, and we deduplicate by name with HTTP models.
-        let native = native::discover_models();
-        let mut native_local: Vec<LocalModel> = native.iter().map(|m| m.to_local_model()).collect();
+        // When native-inference is compiled in, prepend in-process GGUF models
+        // (faster — no HTTP). They deduplicate against anything found by DirectGguf.
+        // Without the feature, DirectGgufProvider already covers ~/.hyperlite/models/.
+        #[cfg(feature = "native-inference")]
+        {
+            let native = native::discover_models();
+            let native_names: std::collections::HashSet<_> =
+                native.iter().map(|m| m.name.as_str()).collect();
+            models.retain(|m| !native_names.contains(m.name.as_str()));
+            let mut native_local: Vec<LocalModel> = native.iter().map(|m| m.to_local_model()).collect();
+            native_local.extend(models);
+            return native_local;
+        }
 
-        // Remove any HTTP-backed model whose name is also covered natively
-        let native_names: std::collections::HashSet<_> =
-            native.iter().map(|m| m.name.as_str()).collect();
-        models.retain(|m| !native_names.contains(m.name.as_str()));
-
-        native_local.extend(models);
-        native_local
+        #[allow(unreachable_code)]
+        models
     }
 
     /// Find a provider that can serve the given model ID.

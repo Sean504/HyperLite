@@ -29,8 +29,8 @@ use super::{
 
 /// Default directories to scan for model files
 const DEFAULT_MODEL_DIRS: &[&str] = &[
+    "~/.hyperlite/models",   // HyperLite's own download directory (always first)
     "~/.cache/huggingface",
-    "~/.ollama/models",
     "~/models",
     "~/Models",
     "~/lm-studio/models",
@@ -156,20 +156,25 @@ impl DirectGgufProvider {
                 .spawn()?);
         }
 
-        // GGUF/GGML: try llama-server
-        let llama_server = which::which("llama-server")
-            .or_else(|_| which::which("llama-cpp-server"))
-            .map_err(|_| anyhow::anyhow!(
-                "No inference runtime found. Install llama.cpp (llama-server) or use a running server backend."
-            ))?;
+        // GGUF/GGML: check bundled llamafile first, then PATH
+        let bundled = crate::startup::runtime_path();
+        let runtime_bin = if bundled.exists() {
+            bundled
+        } else {
+            which::which("llama-server")
+                .or_else(|_| which::which("llama-cpp-server"))
+                .or_else(|_| which::which("llamafile"))
+                .map_err(|_| anyhow::anyhow!(
+                    "No inference runtime found. Restart HyperLite to download llamafile automatically."
+                ))?
+        };
 
-        Ok(tokio::process::Command::new(llama_server)
+        Ok(tokio::process::Command::new(&runtime_bin)
             .arg("--model").arg(path)
             .arg("--port").arg(port.to_string())
             .arg("--host").arg("127.0.0.1")
             .arg("--ctx-size").arg("4096")
             .arg("--n-gpu-layers").arg("0")
-            .arg("--no-webui")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()?)

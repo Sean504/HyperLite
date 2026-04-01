@@ -115,26 +115,13 @@ async fn run_app() -> anyhow::Result<()> {
         format!("{} model(s)  —  {}{}", pre_models.len(), names.join(", "), extra)
     };
     boot_steps.push(startup::BootStep { ok: true, label: model_label });
-    terminal.draw(|f| startup::render_booting(f, &boot_steps, "Checking local model server…"))?;
-
-    // Step 3: check local model server (Ollama)
-    let ollama_present = startup::probe_ollama(&http_client).await;
-    let ollama_label = if ollama_present {
-        "Local AI server  —  running".to_string()
-    } else {
-        "Local AI server  —  not running".to_string()
-    };
-    boot_steps.push(startup::BootStep { ok: ollama_present, label: ollama_label });
     terminal.draw(|f| startup::render_booting(f, &boot_steps, ""))?;
 
-    // ── Startup screen + optional setup wizard ────────────────────────────────
-    // Startup runs BEFORE the App is built so that any newly pulled Ollama
-    // models are included when we construct available_models below.
+    // ── Startup screen + optional model download ──────────────────────────────
     startup::run_startup(
         &mut terminal,
         hardware.clone(),
         &pre_models,
-        ollama_present,
         http_client.clone(),
     ).await?;
 
