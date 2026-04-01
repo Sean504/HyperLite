@@ -1332,12 +1332,12 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         chat.push(ChatMessage {
             role: "user".to_string(),
             content: format!(
-                "[PLAN CONTINUATION — {} step(s) remaining]\n\
-                 Execute step {}/{}: \"{}\"\n\
-                 → Call tool `{}` now. Emit ONLY the <tool_call> block. No text before it.",
-                remaining,
+                "[Step {}/{} of plan — {} step(s) left]\n\
+                 Next: {}.\n\
+                 Please use the `{}` tool for this step.",
                 app.plan_step + 1,
                 app.active_plan.len(),
+                remaining,
                 next_step,
                 tool_hint,
             ),
@@ -1439,13 +1439,12 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
         let next = &app.active_plan[app.plan_step].clone();
         let tool_hint = suggest_tool_for_step(next);
         format!(
-            "You stopped without completing the plan. Execute step {}/{} NOW: \"{}\". \
-             → Use tool `{}`. Emit ONLY the <tool_call> block. No text before it.",
+            "Please continue with step {}/{} of the plan: \"{}\". \
+             Use the `{}` tool to complete this step.",
             app.plan_step + 1, app.active_plan.len(), next, tool_hint
         )
     } else {
-        "You described what you would do but didn't call any tools. \
-         Execute the task RIGHT NOW using tool calls. Do NOT describe — just call the tools.".to_string()
+        "Please go ahead and call the appropriate tool to complete this task.".to_string()
     };
     let enforcer_msg = Message::new_user(&app.session_id, &correction);
     crate::db::insert_message(&app.db, &enforcer_msg)?;

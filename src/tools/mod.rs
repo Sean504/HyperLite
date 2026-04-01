@@ -166,15 +166,14 @@ pub fn build_coding_system_prompt(
 
     out.push_str(r#"## Tool Use
 
-CRITICAL RULES:
-1. To call a tool, output ONLY the raw XML block below — no markdown code fences, no backticks, no extra wrapping.
-2. After emitting a <tool_call> block, STOP your response immediately. Do NOT write any text after the closing </tool_call> tag.
-3. Do NOT predict or guess the output — wait. The system will execute the tool and send you a <tool_result> block.
-4. When you receive a <tool_result>, read it and continue your response naturally.
-5. NEVER output file contents as plain chat text. To create or save a file, ALWAYS use write_file. To show a user what you wrote, use read_file after writing.
-6. JSON parameters MUST use \\n for newlines inside string values — never embed literal newlines in JSON strings.
+Rules:
+1. To call a tool, output the raw XML block shown below — no markdown fences, no backticks around it.
+2. Output one tool call, then stop and wait for the result.
+3. After receiving a <tool_result>, continue naturally — call the next tool or write your response.
+4. To create or save a file, use write_file. Do not output file contents as plain chat text.
+5. JSON parameters must use \\n for newlines, not literal line breaks inside strings.
 
-Tool call format (emit this raw, no ``` wrapping):
+Tool call format:
 
 <tool_call>
 <name>tool_name</name>
@@ -430,22 +429,21 @@ fn build_prompt_with_config(
 
     out.push_str(r#"## Tool Use
 
-CRITICAL RULES:
-1. To call a tool, output ONLY the raw XML block below — no markdown fences, no backticks, no extra wrapping.
-2. After emitting a <tool_call> block, STOP immediately. Do NOT write text after </tool_call>.
-3. Do NOT predict or guess output — wait for the <tool_result> the system sends back.
-4. After receiving a <tool_result>, immediately call the next tool if there are more steps. Do NOT summarize between steps.
-5. NEVER output file contents as chat text. Use write_file to create files. Use read_file to confirm what was written.
-6. JSON parameters MUST use \n for newlines — never embed literal newlines inside JSON strings.
+Rules:
+1. To call a tool, output the raw XML block shown below — no markdown fences, no backticks around it.
+2. Output one tool call at a time, then stop and wait for the result.
+3. After receiving a <tool_result>, call the next tool needed. Avoid summarizing between tool calls during a plan.
+4. To create or save a file, use write_file. Do not output file contents as chat text.
+5. JSON parameters must use \n for newlines, not literal line breaks inside strings.
 
-Tool call format (emit raw, no ``` wrapping):
+Tool call format:
 
 <tool_call>
 <name>tool_name</name>
 <parameters>{"key": "value"}</parameters>
 </tool_call>
 
-One tool call per message. After the result arrives, call the next tool immediately.
+One tool call per response. After the result arrives, call the next tool.
 
 ## Multi-Step Tasks
 
