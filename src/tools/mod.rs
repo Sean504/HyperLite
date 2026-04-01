@@ -39,6 +39,12 @@ pub struct ToolDef {
 /// All tool definitions — injected into system prompt for tag-based models.
 pub static ALL_TOOLS: &[ToolDef] = &[
     ToolDef {
+        name:        "make_plan",
+        description: "Declare a multi-step plan before executing. Call this FIRST for any task that needs 3+ tool calls. List each step you will take. After calling this, immediately start executing step 1 without waiting.",
+        parameters:  r#"{"type":"object","properties":{"title":{"type":"string","description":"Short task title"},"steps":{"type":"array","items":{"type":"string"},"description":"Ordered list of steps you will execute"}},"required":["steps"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
         name:        "search",
         description: "Search the web using DuckDuckGo. Returns titles, snippets, and URLs.",
         parameters:  r#"{"type":"object","properties":{"query":{"type":"string","description":"The search query"}},"required":["query"]}"#,
@@ -96,6 +102,30 @@ pub static ALL_TOOLS: &[ToolDef] = &[
         name:        "move_file",
         description: "Move or rename a file or directory.",
         parameters:  r#"{"type":"object","properties":{"from":{"type":"string","description":"Source path"},"to":{"type":"string","description":"Destination path"}},"required":["from","to"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "copy_file",
+        description: "Copy a file or directory to a new location.",
+        parameters:  r#"{"type":"object","properties":{"from":{"type":"string","description":"Source path"},"to":{"type":"string","description":"Destination path"}},"required":["from","to"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "append_file",
+        description: "Append text to the end of a file, creating it if it doesn't exist.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"File path"},"content":{"type":"string","description":"Text to append"}},"required":["path","content"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "file_info",
+        description: "Get metadata about a file or directory: type, size, modified date.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"File or directory path"}},"required":["path"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "tree",
+        description: "Show a recursive directory tree. Use to understand project structure quickly.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"Root directory (default: current)"},"max_depth":{"type":"integer","description":"How deep to recurse (default: 3)"}}}"#,
         requires_permission: false,
     },
     ToolDef {
@@ -308,7 +338,7 @@ pub static BUILTIN_AGENTS: &[BuiltinAgent] = &[
         id:          "plan",
         name:        "Plan",
         description: "Read-only exploration agent. Can read and search files but will ask before writing or running commands.",
-        allowed_tools: Some(&["read_file", "list_dir", "grep", "glob", "search", "http_fetch"]),
+        allowed_tools: Some(&["make_plan", "read_file", "list_dir", "tree", "grep", "glob", "file_info", "search", "http_fetch"]),
     },
 ];
 
@@ -331,7 +361,7 @@ pub fn build_agent_system_prompt(
         return build_prompt_with_config(
             cwd, project_ctx,
             custom.system.as_deref(),
-            allowed.as_deref().map(|v| v.as_slice()),
+            allowed.as_deref(),
             agent_id == "plan",
         );
     }
@@ -384,21 +414,31 @@ fn build_prompt_with_config(
     out.push_str(r#"## Tool Use
 
 CRITICAL RULES:
-1. To call a tool, output ONLY the raw XML block below — no markdown code fences, no backticks, no extra wrapping.
-2. After emitting a <tool_call> block, STOP your response immediately. Do NOT write any text after the closing </tool_call> tag.
-3. Do NOT predict or guess the output — wait. The system will execute the tool and send you a <tool_result> block.
-4. When you receive a <tool_result>, read it and continue your response naturally.
-5. NEVER output file contents as plain chat text. To create or save a file, ALWAYS use write_file. To show a user what you wrote, use read_file after writing.
-6. JSON parameters MUST use \n for newlines inside string values — never embed literal newlines in JSON strings.
+1. To call a tool, output ONLY the raw XML block below — no markdown fences, no backticks, no extra wrapping.
+2. After emitting a <tool_call> block, STOP immediately. Do NOT write text after </tool_call>.
+3. Do NOT predict or guess output — wait for the <tool_result> the system sends back.
+4. After receiving a <tool_result>, immediately call the next tool if there are more steps. Do NOT summarize between steps.
+5. NEVER output file contents as chat text. Use write_file to create files. Use read_file to confirm what was written.
+6. JSON parameters MUST use \n for newlines — never embed literal newlines inside JSON strings.
 
-Tool call format (emit this raw, no ``` wrapping):
+Tool call format (emit raw, no ``` wrapping):
 
 <tool_call>
 <name>tool_name</name>
 <parameters>{"key": "value"}</parameters>
 </tool_call>
 
-One tool call per response. Wait for the result before calling another tool.
+One tool call per message. After the result arrives, call the next tool immediately.
+
+## Multi-Step Tasks
+
+For tasks requiring 3 or more tool calls:
+1. Call `make_plan` FIRST with every step you intend to take.
+2. Then execute step 1 immediately (call the tool — do not describe it).
+3. After each <tool_result>, call the NEXT tool right away — no commentary between steps.
+4. Only write a summary response AFTER all steps are complete.
+
+This ensures every step is informed by the actual result of the previous step.
 
 ---
 
@@ -416,10 +456,13 @@ One tool call per response. Wait for the result before calling another tool.
 ## Coding Guidelines
 
 - **Read before editing** — always read a file's current content before making changes
-- **Explore first** — use `list_dir` and `glob` to understand the project structure
+- **Explore first** — use `tree` or `list_dir` and `glob` to understand project structure quickly
 - **Verify after edits** — read the file back to confirm your changes applied correctly
 - **Build and test** — after making code changes, run `shell` to build/test and fix errors
 - **Targeted edits** — use `edit_file` for small changes, `write_file` only when creating or fully replacing
+- **Appending** — use `append_file` to add to an existing file without overwriting it
+- **Copying** — use `copy_file` to duplicate files or directories
+- **Check before acting** — use `file_info` to verify a file exists and check its size before reading
 "#);
 
     out
@@ -720,6 +763,7 @@ pub async fn execute(
     client:  &reqwest::Client,
 ) -> ToolResult {
     let result = match call.name.as_str() {
+        "make_plan"  => files::make_plan(&call.parameters),
         "search"     => search::execute(&call.parameters).await,
         "read_file"  => files::read_file(&call.parameters, cwd),
         "write_file" => files::write_file(&call.parameters, cwd),
@@ -730,6 +774,10 @@ pub async fn execute(
         "create_dir" => files::create_dir(&call.parameters, cwd),
         "delete_file"=> files::delete_file(&call.parameters, cwd),
         "move_file"  => files::move_file(&call.parameters, cwd),
+        "copy_file"  => files::copy_file(&call.parameters, cwd),
+        "append_file"=> files::append_file(&call.parameters, cwd),
+        "file_info"  => files::file_info(&call.parameters, cwd),
+        "tree"       => files::tree(&call.parameters, cwd),
         "shell"      => shell::execute(&call.parameters, cwd).await,
         "http_fetch" => http::fetch(&call.parameters, client).await,
         _            => Err(anyhow::anyhow!("Unknown tool: {}", call.name)),

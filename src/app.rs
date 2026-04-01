@@ -119,6 +119,11 @@ pub struct App {
 
     // Agentic tool loop safety counter (reset on each user message)
     pub tool_iterations: u8,
+    // Set when model described an action but called no tools — triggers enforcer re-prompt
+    pub tool_enforcer_pending: bool,
+    // Active multi-step plan declared by make_plan tool
+    pub active_plan:  Vec<String>,
+    pub plan_step:    usize,
 
     // Agent system
     pub current_agent:   String,             // "general" | "build" | "plan" | custom id
@@ -235,6 +240,12 @@ pub async fn run(
             execute_pending_tools(&mut app).await?;
         }
 
+        // Tool enforcer: model described but didn't act — re-prompt it
+        if app.tool_enforcer_pending && !app.streaming {
+            app.tool_enforcer_pending = false;
+            fire_tool_enforcer(&mut app).await?;
+        }
+
         // Refresh model list after a download completes
         if app.model_refresh_pending {
             app.model_refresh_pending = false;
@@ -334,6 +345,22 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                 app.messages.push(msg);
                 if !tool_calls.is_empty() {
                     app.pending_tool_calls = tool_calls;
+                } else {
+                    // Fix 1 — Tool enforcer: model described an action but issued no tool calls.
+                    // Detect passive "I'll/I will/Let me" responses to action requests and re-prompt.
+                    let has_passive = ["I'll ", "I will ", "I can ", "Let me ", "I would ", "Here's "]
+                        .iter().any(|p| normalized.contains(p));
+                    let last_user_text = app.messages.iter().rev()
+                        .skip(1) // skip the assistant message we just pushed
+                        .find(|m| m.role == Role::User && !m.text_content().starts_with("<tool_result>"))
+                        .map(|m| m.text_content())
+                        .unwrap_or_default();
+                    let has_action = ["write", "create", "make", "edit", "fix", "build",
+                                      "add", "implement", "delete", "remove", "update"]
+                        .iter().any(|k| last_user_text.to_lowercase().contains(k));
+                    if has_passive && has_action {
+                        app.tool_enforcer_pending = true;
+                    }
                 }
             }
             app.scroll_to_bottom();
@@ -1001,6 +1028,21 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
 
 // ── Session operations ────────────────────────────────────────────────────────
 
+/// Fix 3 + 4 — build GenerationParams tuned for the current user request.
+/// • temperature 0.1 when the message is an action request (reduces prose/narration)
+/// • </tool_call> stop sequence so generation halts as soon as a tool call closes
+fn action_params(user_text: &str) -> GenerationParams {
+    let is_action = ["write", "create", "make", "edit", "fix", "build",
+                     "add", "implement", "delete", "remove", "update"]
+        .iter().any(|k| user_text.to_lowercase().contains(k));
+    let mut params = GenerationParams::default();
+    params.stop = vec!["</tool_call>".to_string()];
+    if is_action {
+        params.temperature = Some(0.1);
+    }
+    params
+}
+
 async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     // Rename mode: textarea holds new title, not a chat message
     if app.active_prompt == ActivePrompt::Rename {
@@ -1034,6 +1076,9 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     app.streaming = true;
     app.streaming_buf.clear();
     app.tool_iterations = 0;
+    app.tool_enforcer_pending = false;
+    app.active_plan.clear();
+    app.plan_step = 0;
     app.undo_stack.clear(); // new message invalidates redo history
 
     // Build system prompt with full tool documentation
@@ -1097,7 +1142,7 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
         }
     }
 
-    // ── HTTP / Ollama path ────────────────────────────────────────────────────
+    // ── HTTP path ────────────────────────────────────────────────────────────
     let base_url_opt = app.provider_registry
         .find_for_model(&model_id)
         .map(|p| p.base_url().to_string());
@@ -1111,8 +1156,10 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
         }
     };
 
+    // Fix 3+4: tune temperature and stop sequences based on user intent
+    let params = action_params(&text);
+
     tokio::spawn(async move {
-        let params = GenerationParams::default();
         match crate::providers::openai_compat::stream_chat(
             &http_client,
             &base_url,
@@ -1154,7 +1201,7 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
 /// feed results back to the model and continue streaming.
 /// Capped at 15 iterations per user turn to prevent infinite loops.
 async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
-    const MAX_ITERATIONS: u8 = 15;
+    const MAX_ITERATIONS: u8 = 25;
 
     if app.tool_iterations >= MAX_ITERATIONS {
         app.pending_tool_calls.clear();
@@ -1201,10 +1248,17 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
             }
         }
 
-        // Toast so the user sees each tool firing
-        app.push_toast(crate::ui::components::toast::Toast::info(
+        // Show plan progress in the toast if a plan is active
+        let toast_label = if !app.active_plan.is_empty() && call.name != "make_plan" {
+            app.plan_step += 1;
+            let step_label = app.active_plan.get(app.plan_step.saturating_sub(1))
+                .map(|s| format!(": {}", s))
+                .unwrap_or_default();
+            format!("⚙  {} [step {}/{}{}]", call.name, app.plan_step, app.active_plan.len(), step_label)
+        } else {
             format!("⚙  {}", call.name)
-        ));
+        };
+        app.push_toast(crate::ui::components::toast::Toast::info(toast_label));
 
         // Execute (this is async for shell; synchronous for file ops)
         let result = crate::tools::execute(call, &app.working_dir, &app.http_client).await;
@@ -1215,7 +1269,16 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
             ("ok", result.output)
         };
 
-        // Use a human-readable format the model understands clearly
+        // If make_plan was called, store the steps in app state
+        if call.name == "make_plan" && status == "ok" {
+            if let Some(steps) = call.parameters.get("steps").and_then(|v| v.as_array()) {
+                app.active_plan = steps.iter()
+                    .filter_map(|s| s.as_str().map(|t| t.to_string()))
+                    .collect();
+                app.plan_step = 0;
+            }
+        }
+
         result_parts.push(format!(
             "<tool_result>\n<name>{}</name>\n<status>{}</status>\n<output>\n{}\n</output>\n</tool_result>",
             call.name, status, content.trim()
@@ -1268,8 +1331,14 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Keep low temperature and stop sequences for the follow-up turn
+    let last_user_text = app.messages.iter().rev()
+        .find(|m| m.role == Role::User && !m.text_content().starts_with("<tool_result>"))
+        .map(|m| m.text_content())
+        .unwrap_or_default();
+    let params = action_params(&last_user_text);
+
     tokio::spawn(async move {
-        let params = GenerationParams::default();
         match crate::providers::openai_compat::stream_chat(
             &http_client,
             &base_url,
@@ -1300,6 +1369,68 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         }
     });
 
+    Ok(())
+}
+
+/// Fix 1 — Tool enforcer: model said it would act but issued no tool calls.
+/// Inject a short correction message and re-stream with low temperature.
+async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
+    if app.tool_iterations >= 15 { return Ok(()); }
+    app.tool_iterations += 1;
+
+    let correction = "You described what you would do but didn't call any tools. \
+        Execute the task RIGHT NOW using tool calls. Do NOT describe your plan — just call the tools.";
+    let enforcer_msg = Message::new_user(&app.session_id, correction);
+    crate::db::insert_message(&app.db, &enforcer_msg)?;
+    app.messages.push(enforcer_msg);
+
+    app.streaming = true;
+    app.streaming_buf.clear();
+
+    let system = crate::tools::build_agent_system_prompt(
+        &app.working_dir, app.project_ctx.as_ref(), &app.current_agent, &app.custom_agents,
+    );
+    let mut chat: Vec<ChatMessage> = vec![ChatMessage { role: "system".to_string(), content: system }];
+    for msg in &app.messages {
+        let role = match msg.role { Role::User => "user", Role::Assistant => "assistant" };
+        let content = msg.text_content();
+        if !content.is_empty() { chat.push(ChatMessage { role: role.to_string(), content }); }
+    }
+
+    let model_id    = app.current_model.clone();
+    let tx          = app.event_tx.clone();
+    let http_client = app.http_client.clone();
+    let base_url    = app.provider_registry.find_for_model(&model_id)
+        .map(|p| p.base_url().to_string()).unwrap_or_default();
+
+    if base_url.is_empty() { app.streaming = false; return Ok(()); }
+
+    let mut params = GenerationParams::default();
+    params.temperature = Some(0.1);
+    params.stop = vec!["</tool_call>".to_string()];
+
+    tokio::spawn(async move {
+        match crate::providers::openai_compat::stream_chat(
+            &http_client, &base_url, crate::providers::BackendKind::OpenAICompat,
+            &chat, &model_id, &params,
+        ).await {
+            Ok(mut rx) => {
+                let start = std::time::Instant::now();
+                while let Some(ev) = rx.recv().await {
+                    match ev {
+                        StreamEvent::Text(t)      => { let _ = tx.send(Event::StreamText(t)); }
+                        StreamEvent::Reasoning(r) => { let _ = tx.send(Event::StreamReasoning(r)); }
+                        StreamEvent::Done { .. } => {
+                            let _ = tx.send(Event::StreamDone { duration_ms: start.elapsed().as_millis() as u64 });
+                            break;
+                        }
+                        StreamEvent::Error(e) => { let _ = tx.send(Event::StreamError(e)); break; }
+                    }
+                }
+            }
+            Err(e) => { let _ = tx.send(Event::StreamError(e.to_string())); }
+        }
+    });
     Ok(())
 }
 

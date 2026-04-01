@@ -60,11 +60,44 @@ fn render_tool_result_msg(text: &str, theme: &Theme, lines: &mut Vec<Line<'stati
         let inner = &rest[..end];
         rest = if end < rest.len() { &rest[end + "</tool_result>".len()..] } else { "" };
 
-        // Extract name, status, output
         let name   = extract_tag(inner, "name").unwrap_or("tool");
         let status = extract_tag(inner, "status").unwrap_or("ok");
         let output = extract_tag(inner, "output").unwrap_or("");
 
+        // ── make_plan: special checklist rendering ─────────────────────────────
+        if name == "make_plan" {
+            lines.push(Line::from(vec![
+                Span::styled(" ◈ ", Style::default().fg(theme.accent)),
+                Span::styled("Plan", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+                Span::styled("  ready to execute", Style::default().fg(theme.text_dim)),
+            ]));
+            for line in output.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() { continue; }
+                // Lines like "1. Step text" get checkbox styling
+                if trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    let dot_pos = trimmed.find(". ").unwrap_or(0);
+                    let (num, step) = trimmed.split_at(dot_pos.min(trimmed.len()));
+                    let step = step.trim_start_matches(". ");
+                    lines.push(Line::from(vec![
+                        Span::styled("   ", Style::default()),
+                        Span::styled("○ ", Style::default().fg(theme.text_dim)),
+                        Span::styled(format!("{}. ", num), Style::default().fg(theme.text_dim)),
+                        Span::styled(step.to_string(), Style::default().fg(theme.text)),
+                    ]));
+                } else if trimmed.starts_with("▸") || trimmed.starts_with("steps planned") {
+                    // skip decorative lines already shown in header
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("   {}", trimmed), Style::default().fg(theme.text_muted)),
+                    ]));
+                }
+            }
+            lines.push(Line::default());
+            continue;
+        }
+
+        // ── All other tools ────────────────────────────────────────────────────
         let (icon, status_style) = if status == "error" {
             ("✗", Style::default().fg(theme.error))
         } else {

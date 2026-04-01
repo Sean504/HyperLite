@@ -891,10 +891,10 @@ fn render_setup_checks(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
     let ollama_ok   = state.ollama_installed;
     let running_ok  = state.ollama_present;
 
-    lines.push(Line::from(vec![Span::styled(chk(curl_ok,   curl_label),           Style::default().fg(chk_color(curl_ok)))]));
-    lines.push(Line::from(vec![Span::styled(chk(sudo_ok,   "sudo"),               Style::default().fg(chk_color(sudo_ok)))]));
-    lines.push(Line::from(vec![Span::styled(chk(ollama_ok, "ollama binary"),       Style::default().fg(chk_color(ollama_ok)))]));
-    lines.push(Line::from(vec![Span::styled(chk(running_ok,"ollama running"),      Style::default().fg(chk_color(running_ok)))]));
+    lines.push(Line::from(vec![Span::styled(chk(curl_ok,   curl_label),              Style::default().fg(chk_color(curl_ok)))]));
+    lines.push(Line::from(vec![Span::styled(chk(sudo_ok,   "sudo"),                  Style::default().fg(chk_color(sudo_ok)))]));
+    lines.push(Line::from(vec![Span::styled(chk(ollama_ok, "model server binary"),   Style::default().fg(chk_color(ollama_ok)))]));
+    lines.push(Line::from(vec![Span::styled(chk(running_ok,"model server running"),  Style::default().fg(chk_color(running_ok)))]));
     lines.push(Line::default());
     let pm = if pf.pkg_manager.is_empty() { "none detected" } else { pf.pkg_manager };
     lines.push(Line::from(vec![Span::styled(format!("  {}  package manager: {}", spinner, pm), Style::default().fg(muted))]));

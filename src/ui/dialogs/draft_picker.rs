@@ -32,14 +32,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let items: Vec<ListItem> = if app.drafts.is_empty() {
         vec![ListItem::new(Span::styled(
             "  No stashed drafts yet.  Press Ctrl+D to stash current input.",
-            Style::default().fg(app.theme.fg_dim),
+            Style::default().fg(app.theme.text_muted),
         ))]
     } else {
         app.drafts.iter().map(|d| {
             let preview = d.content.lines().next().unwrap_or("").chars().take(60).collect::<String>();
             ListItem::new(Line::from(vec![
                 Span::styled(format!("  {} ", d.label), Style::default().fg(app.theme.accent)),
-                Span::styled(preview, Style::default().fg(app.theme.fg_dim)),
+                Span::styled(preview, Style::default().fg(app.theme.text_muted)),
             ]))
         }).collect()
     };
@@ -50,18 +50,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let list = List::new(items)
-        .highlight_style(Style::default().bg(app.theme.selection).fg(app.theme.fg).add_modifier(Modifier::BOLD))
+        .highlight_style(Style::default().bg(app.theme.bg_element).fg(app.theme.text).add_modifier(Modifier::BOLD))
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, chunks[0], &mut state);
 
     let hint = Paragraph::new(Line::from(vec![
         Span::styled(" Enter", Style::default().fg(app.theme.accent)),
-        Span::styled(" restore  ", Style::default().fg(app.theme.fg_dim)),
+        Span::styled(" restore  ", Style::default().fg(app.theme.text_muted)),
         Span::styled("d", Style::default().fg(app.theme.accent)),
-        Span::styled(" delete  ", Style::default().fg(app.theme.fg_dim)),
+        Span::styled(" delete  ", Style::default().fg(app.theme.text_muted)),
         Span::styled("Esc", Style::default().fg(app.theme.accent)),
-        Span::styled(" close", Style::default().fg(app.theme.fg_dim)),
+        Span::styled(" close", Style::default().fg(app.theme.text_muted)),
     ]));
     frame.render_widget(hint, chunks[1]);
 }

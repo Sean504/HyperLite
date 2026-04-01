@@ -115,14 +115,14 @@ async fn run_app() -> anyhow::Result<()> {
         format!("{} model(s)  —  {}{}", pre_models.len(), names.join(", "), extra)
     };
     boot_steps.push(startup::BootStep { ok: true, label: model_label });
-    terminal.draw(|f| startup::render_booting(f, &boot_steps, "Checking Ollama server…"))?;
+    terminal.draw(|f| startup::render_booting(f, &boot_steps, "Checking local model server…"))?;
 
-    // Step 3: check Ollama
+    // Step 3: check local model server (Ollama)
     let ollama_present = startup::probe_ollama(&http_client).await;
     let ollama_label = if ollama_present {
-        "Ollama server  —  running".to_string()
+        "Local AI server  —  running".to_string()
     } else {
-        "Ollama server  —  not running".to_string()
+        "Local AI server  —  not running".to_string()
     };
     boot_steps.push(startup::BootStep { ok: ollama_present, label: ollama_label });
     terminal.draw(|f| startup::render_booting(f, &boot_steps, ""))?;
@@ -181,6 +181,9 @@ async fn run_app() -> anyhow::Result<()> {
     let (event_tx, event_rx) = mpsc::unbounded_channel::<event::Event>();
 
     // ── Build App ─────────────────────────────────────────────────────────────
+    let custom_agents = crate::db::list_agents(&db).unwrap_or_default();
+    let drafts        = crate::db::list_drafts(&db).unwrap_or_default();
+
     let app = App {
         config,
         db,
@@ -241,11 +244,14 @@ async fn run_app() -> anyhow::Result<()> {
         event_tx,
 
         tool_iterations: 0,
+        tool_enforcer_pending: false,
+        active_plan:     Vec::new(),
+        plan_step:       0,
 
         current_agent:   "general".to_string(),
-        custom_agents:   crate::db::list_agents(&db).unwrap_or_default(),
+        custom_agents,
         undo_stack:      Vec::new(),
-        drafts:          crate::db::list_drafts(&db).unwrap_or_default(),
+        drafts,
         agent_editor_name:   String::new(),
         agent_editor_desc:   String::new(),
         agent_editor_system: tui_textarea::TextArea::default(),

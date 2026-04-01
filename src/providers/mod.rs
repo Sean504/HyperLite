@@ -122,7 +122,7 @@ pub enum BackendKind {
 impl BackendKind {
     pub fn display_name(&self) -> &'static str {
         match self {
-            BackendKind::Ollama        => "Ollama",
+            BackendKind::Ollama        => "local",
             BackendKind::LlamaCpp      => "llama.cpp",
             BackendKind::LmStudio      => "LM Studio",
             BackendKind::KoboldCpp     => "KoboldCpp",

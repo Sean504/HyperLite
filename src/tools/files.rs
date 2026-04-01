@@ -11,6 +11,24 @@ fn resolve(base: &Path, path_str: &str) -> PathBuf {
     if p.is_absolute() { p } else { base.join(p) }
 }
 
+pub fn make_plan(params: &Value) -> Result<String> {
+    let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("Task Plan");
+    let steps = params.get("steps").and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("make_plan: 'steps' array required"))?;
+
+    if steps.is_empty() {
+        anyhow::bail!("make_plan: at least one step required");
+    }
+
+    let mut out = format!("▸ {}\n", title);
+    for (i, step) in steps.iter().enumerate() {
+        let text = step.as_str().unwrap_or("(step)");
+        out.push_str(&format!("  {}. {}\n", i + 1, text));
+    }
+    out.push_str(&format!("\n{} steps planned. Executing now…", steps.len()));
+    Ok(out)
+}
+
 pub fn read_file(params: &Value, cwd: &Path) -> Result<String> {
     let path_str = params.get("path").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("read_file: 'path' required"))?;
@@ -239,6 +257,128 @@ pub fn delete_file(params: &Value, cwd: &Path) -> Result<String> {
     } else {
         std::fs::remove_file(&path)?;
         Ok(format!("Deleted file: {}", path.display()))
+    }
+}
+
+pub fn copy_file(params: &Value, cwd: &Path) -> Result<String> {
+    let from_str = params.get("from").and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("copy_file: 'from' required"))?;
+    let to_str = params.get("to").and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("copy_file: 'to' required"))?;
+    let from = resolve(cwd, from_str);
+    let to   = resolve(cwd, to_str);
+    if !from.exists() {
+        anyhow::bail!("Source not found: {}", from.display());
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if from.is_dir() {
+        copy_dir_recursive(&from, &to)?;
+        Ok(format!("Copied directory: {} → {}", from.display(), to.display()))
+    } else {
+        std::fs::copy(&from, &to)?;
+        Ok(format!("Copied: {} → {}", from.display(), to.display()))
+    }
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn append_file(params: &Value, cwd: &Path) -> Result<String> {
+    let path_str = params.get("path").and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("append_file: 'path' required"))?;
+    let content = params.get("content").and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("append_file: 'content' required"))?;
+    let path = resolve(cwd, path_str);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    file.write_all(content.as_bytes())?;
+    Ok(format!("Appended {} bytes to {}", content.len(), path.display()))
+}
+
+pub fn file_info(params: &Value, cwd: &Path) -> Result<String> {
+    let path_str = params.get("path").and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("file_info: 'path' required"))?;
+    let path = resolve(cwd, path_str);
+    if !path.exists() {
+        return Ok(format!("not found: {}", path.display()));
+    }
+    let meta = std::fs::metadata(&path)?;
+    let kind = if meta.is_dir() { "directory" } else if meta.is_file() { "file" } else { "symlink" };
+    let size = if meta.is_file() { format!("  size: {}\n", human_size(meta.len())) } else { String::new() };
+    let modified = meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| {
+            let secs = d.as_secs();
+            let ts = chrono::DateTime::from_timestamp(secs as i64, 0)
+                .map(|dt: chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| format!("{} sec epoch", secs));
+            format!("  modified: {}\n", ts)
+        })
+        .unwrap_or_default();
+    let readonly = if meta.permissions().readonly() { "  readonly: true\n" } else { "" };
+    Ok(format!(
+        "path: {}\n  type: {}\n{}{}{}",
+        path.display(), kind, size, modified, readonly
+    ))
+}
+
+pub fn tree(params: &Value, cwd: &Path) -> Result<String> {
+    let path_str = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+    let max_depth = params.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+    let path = resolve(cwd, path_str);
+    if !path.exists() {
+        anyhow::bail!("Path not found: {}", path.display());
+    }
+    let mut out = format!("{}/\n", path.display());
+    let mut count = 0usize;
+    tree_recurse(&path, &path, 0, max_depth, &mut out, &mut count);
+    Ok(out)
+}
+
+fn tree_recurse(root: &Path, dir: &Path, depth: usize, max_depth: usize, out: &mut String, count: &mut usize) {
+    if depth >= max_depth || *count > 300 { return; }
+    let indent = "  ".repeat(depth + 1);
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| {
+        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        (!is_dir, e.file_name()) // dirs first
+    });
+    for entry in entries {
+        if *count > 300 { out.push_str("  …(truncated)\n"); break; }
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Skip hidden and build artifacts
+        if name.starts_with('.') || matches!(name.as_str(), "node_modules" | "target" | "dist" | "__pycache__") {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            out.push_str(&format!("{}{}/\n", indent, name));
+            *count += 1;
+            tree_recurse(root, &entry.path(), depth + 1, max_depth, out, count);
+        } else {
+            let size = entry.metadata().map(|m| format!("  ({})", human_size(m.len()))).unwrap_or_default();
+            out.push_str(&format!("{}{}{}\n", indent, name, size));
+            *count += 1;
+        }
     }
 }
 
