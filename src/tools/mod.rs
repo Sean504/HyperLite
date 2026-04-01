@@ -401,6 +401,8 @@ pub fn unwrap_fenced_tool_calls(text: &str) -> String {
             if inner_trimmed.starts_with('{') {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(inner_trimmed)
                     .or_else(|_| serde_json::from_str(&repair_json(inner_trimmed)))
+                    .or_else(|_| serde_json::from_str(&expand_js_repeat(inner_trimmed)))
+                    .or_else(|_| serde_json::from_str(&repair_json(&expand_js_repeat(inner_trimmed))))
                 {
                     let name = v.get("name").or_else(|| v.get("tool")).and_then(|n| n.as_str());
                     let args = v.get("arguments").or_else(|| v.get("parameters"));
@@ -485,11 +487,69 @@ fn repair_json(s: &str) -> String {
     out
 }
 
+/// Expand JS-style string `.repeat(N)` expressions that models sometimes emit.
+/// e.g.  `"hello\n".repeat(3)`  →  `"hello\nhello\nhello\n"`
+fn expand_js_repeat(s: &str) -> String {
+    let mut out = s.to_string();
+    // Keep replacing until no more matches (handles chained or multiple repeats)
+    loop {
+        // Find pattern:  "..." .repeat( N )
+        // We scan manually to correctly handle escaped quotes inside the string.
+        let bytes = out.as_bytes();
+        let mut found = false;
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] != b'"' { i += 1; continue; }
+            // Scan to end of JSON string literal
+            let str_start = i;
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' { i += 2; continue; }
+                if bytes[i] == b'"' { i += 1; break; }
+                i += 1;
+            }
+            let str_end = i; // exclusive, points past closing "
+            // Skip whitespace
+            let mut j = str_end;
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') { j += 1; }
+            // Look for .repeat(
+            if bytes.get(j..j+8) != Some(b".repeat(") { continue; }
+            j += 8;
+            // Parse number
+            let num_start = j;
+            while j < bytes.len() && bytes[j].is_ascii_digit() { j += 1; }
+            let num_end = j;
+            // Skip whitespace then expect )
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') { j += 1; }
+            if bytes.get(j) != Some(&b')') { continue; }
+            j += 1;
+            // We have a match: out[str_start..str_end] .repeat( N )
+            let count: usize = std::str::from_utf8(&bytes[num_start..num_end])
+                .ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+            // Extract the raw string content (without surrounding quotes)
+            let raw = &out[str_start+1..str_end-1];
+            // Unescape \n \t \r for repetition, then re-escape
+            let unescaped = raw.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r");
+            let repeated  = unescaped.repeat(count);
+            let reescaped = repeated.replace('\\', "\\\\").replace('"', "\\\"")
+                .replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+            let replacement = format!("\"{}\"", reescaped);
+            out = format!("{}{}{}", &out[..str_start], replacement, &out[j..]);
+            found = true;
+            break; // restart from beginning
+        }
+        if !found { break; }
+    }
+    out
+}
+
 fn parse_single_tool_call(inner: &str) -> Option<ToolCall> {
     let name = extract_xml_tag(inner, "name")?;
     let params_str = extract_xml_tag(inner, "parameters").unwrap_or_else(|| "{}".to_string());
     let parameters = serde_json::from_str(&params_str)
         .or_else(|_| serde_json::from_str(&repair_json(&params_str)))
+        .or_else(|_| serde_json::from_str(&expand_js_repeat(&params_str)))
+        .or_else(|_| serde_json::from_str(&repair_json(&expand_js_repeat(&params_str))))
         .unwrap_or(serde_json::Value::Object(Default::default()));
 
     Some(ToolCall {
