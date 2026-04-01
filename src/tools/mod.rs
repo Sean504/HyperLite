@@ -618,10 +618,58 @@ pub fn unwrap_fenced_tool_calls(text: &str) -> String {
     out
 }
 
+/// Detect bare `<name>TOOL</name><parameters>...</parameters>` that appears
+/// WITHOUT a `<tool_call>` wrapper or a code fence — the model forgot the outer tag.
+/// Wraps any such blocks in `<tool_call>…</tool_call>` so the normal parser handles them.
+fn wrap_bare_xml_tool_calls(text: &str) -> String {
+    // Fast path: if already wrapped or no bare <name> tag, nothing to do.
+    if text.contains("<tool_call>") || !text.contains("<name>") {
+        return text.to_string();
+    }
+
+    let mut result = text.to_string();
+    let mut search_from = 0;
+
+    loop {
+        let Some(name_open) = result[search_from..].find("<name>") else { break };
+        let abs_name_open = search_from + name_open;
+
+        let content_start = abs_name_open + "<name>".len();
+        let Some(name_close_rel) = result[content_start..].find("</name>") else { break };
+        let abs_name_close = content_start + name_close_rel;
+
+        let tool_name = result[content_start..abs_name_close].trim().to_string();
+
+        // Only act on known tool names
+        if !ALL_TOOLS.iter().any(|t| t.name == tool_name) {
+            search_from = abs_name_close + "</name>".len();
+            continue;
+        }
+
+        // Find the end of this block: either </parameters> or end-of-string
+        let after_name = abs_name_close + "</name>".len();
+        let block_end = result[after_name..].find("</parameters>")
+            .map(|i| after_name + i + "</parameters>".len())
+            .unwrap_or(result.len());
+
+        // Extract the inner XML and wrap it
+        let inner = result[abs_name_open..block_end].trim().to_string();
+        let wrapped = format!("<tool_call>\n{}\n</tool_call>", inner);
+
+        result.replace_range(abs_name_open..block_end, &wrapped);
+
+        // Advance past the newly inserted block
+        search_from = abs_name_open + wrapped.len();
+    }
+
+    result
+}
+
 /// Returns (clean_text_without_tool_calls, tool_calls)
 pub fn parse_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
-    // Normalize: unwrap any code-fence wrappers around tool calls
+    // Normalize: unwrap code-fence wrappers, then wrap any bare <name>TOOL</name> blocks
     let normalized = unwrap_fenced_tool_calls(text);
+    let normalized = wrap_bare_xml_tool_calls(&normalized);
     let text = normalized.as_str();
 
     let mut calls = vec![];
