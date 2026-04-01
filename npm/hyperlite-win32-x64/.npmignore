@@ -1,4 +1,4 @@
-# Keep only the binary
 *
 !hl.exe
 !package.json
+!README.md
