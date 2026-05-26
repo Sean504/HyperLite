@@ -8,6 +8,7 @@ const os = require('os');
 const PLATFORM_PACKAGES = {
   'win32-x64':    { pkg: '@hyperlite-ai/win32-x64',    bin: 'hl.exe' },
   'linux-x64':    { pkg: '@hyperlite-ai/linux-x64',    bin: 'hl'     },
+  'linux-arm64':  { pkg: '@hyperlite-ai/linux-arm64',  bin: 'hl'     },
   'darwin-arm64': { pkg: '@hyperlite-ai/darwin-arm64', bin: 'hl'     },
 };
 

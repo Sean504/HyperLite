@@ -15,11 +15,11 @@
   },
   "files": ["bin/run.js"],
   "optionalDependencies": {
-     "hyperlite-linux-x64": "0.2.0",
-  "hyperlite-win32-x64": "0.2.0",
-  "hyperlite-darwin-arm64": "0.2.0",
-  "hyperlite-linux-arm64": "0.2.0"
-  },
+  "@hyperlite-ai/hyperlite-linux-x64": "0.2.3",
+  "@hyperlite-ai/hyperlite-win32-x64": "0.2.3",
+  "@hyperlite-ai/hyperlite-darwin-arm64": "0.2.3",
+  "@hyperlite-ai/hyperlite-linux-arm64": "0.2.3"
+},
   "engines": {
     "node": ">=16"
   }
