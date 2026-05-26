@@ -1,5 +1,5 @@
 {
-  "name": "hyperlite-linux-arm64",
+  "name": "@hyperlite-ai/hyperlite-linux-arm64",
   "version": "0.0.1",
   "description": "HyperLite binary for Linux ARM64 (Raspberry Pi 5)",
   "os": ["linux"],
