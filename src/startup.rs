@@ -10,7 +10,7 @@
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -337,6 +337,7 @@ pub async fn run_startup(
             if event::poll(Duration::from_millis(80))? {
                 let ev = event::read()?;
                 if let Event::Key(key) = ev {
+                    if key.kind != KeyEventKind::Press { continue; }
                     if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('q') {
                         std::process::exit(0);
                     }
@@ -386,6 +387,7 @@ pub async fn run_startup(
         if !event::poll(Duration::from_millis(80))? { continue; }
         let ev = event::read()?;
         let Event::Key(key) = ev else { continue };
+        if key.kind != KeyEventKind::Press { continue; }
 
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('q') {
             std::process::exit(0);
