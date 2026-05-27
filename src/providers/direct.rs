@@ -75,8 +75,10 @@ impl DirectGgufProvider {
         let canonical = crate::startup::models_dir();
         let extra = std::iter::once(&canonical);
 
+        let platform_extras = extra_model_dirs();
         let all_dirs: Vec<&PathBuf> = self.model_dirs.iter()
             .chain(extra)
+            .chain(platform_extras.iter())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
@@ -231,11 +233,35 @@ impl DirectGgufProvider {
 
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return format!("{}/{}", home.display(), rest);
-        }
+        let home = crate::startup::real_home_dir();
+        return format!("{}/{}", home.display(), rest);
     }
     path.to_string()
+}
+
+/// On ARM64 Linux (RPi5), return extra directories to scan for models.
+/// Covers cases where the app was run as a different user than the one who
+/// downloaded the models (e.g. root vs normal user).
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub fn extra_model_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![
+        PathBuf::from("/root/.hyperlite/models"),
+    ];
+    // Scan all home directories under /home/
+    if let Ok(entries) = std::fs::read_dir("/home") {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join(".hyperlite").join("models");
+            if candidate.exists() {
+                dirs.push(candidate);
+            }
+        }
+    }
+    dirs
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+pub fn extra_model_dirs() -> Vec<PathBuf> {
+    vec![]
 }
 
 // ── Provider implementation ───────────────────────────────────────────────────

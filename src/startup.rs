@@ -24,11 +24,42 @@ use crate::providers::LocalModel;
 
 // ── Models directory ──────────────────────────────────────────────────────────
 
+/// On ARM64 Linux (RPi5), dirs::home_dir() can return wrong results when the
+/// process is run as root or via sudo. Read the real home from /etc/passwd
+/// using the actual UID so models are always found regardless of how the app
+/// was launched.
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub fn real_home_dir() -> PathBuf {
+    // Try passwd lookup by real UID first
+    let uid = unsafe { libc::getuid() };
+    if let Ok(contents) = std::fs::read_to_string("/etc/passwd") {
+        for line in contents.lines() {
+            let fields: Vec<&str> = line.split(':').collect();
+            if fields.len() >= 6 {
+                if let Ok(entry_uid) = fields[2].parse::<u32>() {
+                    if entry_uid == uid {
+                        let home = PathBuf::from(fields[5]);
+                        if home.exists() {
+                            return home;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Fall back to dirs::home_dir() or /root for root, /home/<user> otherwise
+    dirs::home_dir().unwrap_or_else(|| {
+        if uid == 0 { PathBuf::from("/root") } else { PathBuf::from(".") }
+    })
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+pub fn real_home_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
 pub fn models_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".hyperlite")
-        .join("models")
+    real_home_dir().join(".hyperlite").join("models")
 }
 
 pub fn ensure_models_dir() -> anyhow::Result<PathBuf> {
@@ -57,10 +88,7 @@ pub fn has_local_models() -> bool {
 /// Path where HyperLite stores the bundled llamafile runtime.
 pub fn runtime_path() -> PathBuf {
     let filename = if cfg!(windows) { "llamafile.exe" } else { "llamafile" };
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".hyperlite")
-        .join(filename)
+    real_home_dir().join(".hyperlite").join(filename)
 }
 
 /// Returns true if a usable inference runtime is available.
