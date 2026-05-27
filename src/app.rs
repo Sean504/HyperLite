@@ -1595,14 +1595,48 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
     let model_id    = app.current_model.clone();
     let tx          = app.event_tx.clone();
     let http_client = app.http_client.clone();
-    let base_url    = app.provider_registry.find_for_model(&model_id)
-        .map(|p| p.base_url().to_string()).unwrap_or_default();
-
-    if base_url.is_empty() { app.streaming = false; return Ok(()); }
 
     let mut params = GenerationParams::default();
     params.temperature = Some(0.1);
     params.stop = vec!["</tool_call>".to_string()];
+
+    // DirectGguf models need the same special path as submit_message /
+    // execute_pending_tools — find_for_model falls back to the first HTTP
+    // provider (LlamaCpp:8080) for path-based model IDs, which is wrong.
+    let model_backend = app.available_models.iter()
+        .find(|m| m.id == model_id)
+        .map(|m| m.backend.clone());
+
+    if model_backend == Some(crate::providers::BackendKind::DirectGguf) {
+        let client   = http_client.clone();
+        let hardware = app.hardware.clone();
+        tokio::spawn(async move {
+            let provider = crate::providers::direct::DirectGgufProvider::new(client, hardware);
+            match crate::providers::LocalProvider::chat_stream(&provider, &chat, &model_id, &params).await {
+                Ok(mut rx) => {
+                    let start = std::time::Instant::now();
+                    while let Some(ev) = rx.recv().await {
+                        match ev {
+                            StreamEvent::Text(t)      => { let _ = tx.send(Event::StreamText(t)); }
+                            StreamEvent::Reasoning(r) => { let _ = tx.send(Event::StreamReasoning(r)); }
+                            StreamEvent::Done { .. } => {
+                                let _ = tx.send(Event::StreamDone { duration_ms: start.elapsed().as_millis() as u64 });
+                                break;
+                            }
+                            StreamEvent::Error(e) => { let _ = tx.send(Event::StreamError(e)); break; }
+                        }
+                    }
+                }
+                Err(e) => { let _ = tx.send(Event::StreamError(e.to_string())); }
+            }
+        });
+        return Ok(());
+    }
+
+    let base_url = app.provider_registry.find_for_model(&model_id)
+        .map(|p| p.base_url().to_string()).unwrap_or_default();
+
+    if base_url.is_empty() { app.streaming = false; return Ok(()); }
 
     tokio::spawn(async move {
         match crate::providers::openai_compat::stream_chat(

@@ -459,7 +459,11 @@ fn start_next_download(state: &mut SetupState) {
     let (tx, rx) = tmpsc::unbounded_channel::<DlEvent>();
     state.dl_rx = Some(rx);
 
-    let client     = state.http_client.clone();
+    // Build a dedicated client with no request timeout — model files can be
+    // several GB and would exceed the 120-second app-wide client timeout.
+    let client = reqwest::Client::builder()
+        .build()
+        .unwrap_or_else(|_| state.http_client.clone());
     let url        = job.url.clone();
     let filename   = job.filename.clone();
     let name       = job.name.clone();
@@ -794,7 +798,7 @@ fn render_model_select(f: &mut ratatui::Frame, area: Rect, state: &mut SetupStat
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Length(1), Constraint::Min(1), Constraint::Length(3)])
+        .constraints([Constraint::Length(3), Constraint::Length(1), Constraint::Min(1), Constraint::Length(3)])
         .split(inner);
 
     let hw_note = if state.hardware.cpu_only {
@@ -804,11 +808,16 @@ fn render_model_select(f: &mut ratatui::Frame, area: Rect, state: &mut SetupStat
             state.hardware.best_vram_mb as f32 / 1024.0,
             state.hardware.memory.total_mb / 1024)
     };
+    let models_path = models_dir().to_string_lossy().to_string();
     f.render_widget(
         Paragraph::new(vec![
             Line::from(vec![Span::styled(
                 format!("  Filtered for your hardware: {}  ", hw_note),
                 Style::default().fg(muted),
+            )]),
+            Line::from(vec![Span::styled(
+                format!("  Models saved to: {}", models_path),
+                Style::default().fg(dim),
             )]),
             Line::from(vec![Span::styled(
                 "  Space → toggle  ·  ↑↓/jk → navigate  ·  Enter → download  ·  Esc → skip",
