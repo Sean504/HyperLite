@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { execFileSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
 const path = require('path');
 const os = require('os');
 
@@ -20,6 +20,14 @@ function getPlatformKey() {
   return `${plat}-${arch}`;
 }
 
+function tryResolve(pkg) {
+  try {
+    return require.resolve(`${pkg}/package.json`);
+  } catch {
+    return null;
+  }
+}
+
 function getBinaryPath() {
   const key = getPlatformKey();
   const entry = PLATFORM_PACKAGES[key];
@@ -30,20 +38,31 @@ function getBinaryPath() {
     process.exit(1);
   }
 
-  try {
-    const pkgJson = require.resolve(`${entry.pkg}/package.json`);
-    return path.join(path.dirname(pkgJson), entry.bin);
-  } catch {
-    console.error(`hyperlite: platform package "${entry.pkg}" is not installed.`);
-    console.error('Try: npm install -g hyperlite');
+  let pkgJson = tryResolve(entry.pkg);
+
+  if (!pkgJson) {
+    // Optional dependency wasn't auto-installed — try to install it now
+    process.stderr.write(`hyperlite: installing platform package ${entry.pkg}...\n`);
+    try {
+      execSync(`npm install -g ${entry.pkg}`, { stdio: 'inherit' });
+      pkgJson = tryResolve(entry.pkg);
+    } catch {
+      // ignore — will fail below with clear message
+    }
+  }
+
+  if (!pkgJson) {
+    console.error(`hyperlite: could not install platform package "${entry.pkg}".`);
+    console.error(`Run manually: npm install -g ${entry.pkg}`);
     process.exit(1);
   }
+
+  return path.join(path.dirname(pkgJson), entry.bin);
 }
 
 const bin = getBinaryPath();
 try {
   execFileSync(bin, process.argv.slice(2), { stdio: 'inherit' });
 } catch (err) {
-  // Exit with the child's exit code so shell scripts see it correctly
   process.exit(err.status ?? 1);
 }
