@@ -702,6 +702,38 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
                 app.dialog_search_query.clear();
             }
         }
+        // Ctrl+D = delete highlighted session in SessionList
+        KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL
+            && app.active_dialog == ActiveDialog::SessionList =>
+        {
+            let query = app.dialog_search_query.to_lowercase();
+            let filtered_ids: Vec<String> = app.sessions.iter()
+                .filter(|s| query.is_empty() || s.title.to_lowercase().contains(&query))
+                .map(|s| s.id.clone())
+                .collect();
+            if let Some(target_id) = filtered_ids.get(app.dialog_selected_idx).cloned() {
+                if app.sessions.len() <= 1 {
+                    app.push_toast(crate::ui::components::toast::Toast::warning("Cannot delete the last session"));
+                } else {
+                    crate::db::delete_session(&app.db, &target_id)?;
+                    app.sessions.retain(|s| s.id != target_id);
+                    if app.session_id == target_id {
+                        if let Some(s) = app.sessions.first() {
+                            let id = s.id.clone();
+                            load_session(app, id)?;
+                        }
+                        close_dialog(app);
+                    } else {
+                        let new_len = filtered_ids.len().saturating_sub(1);
+                        if app.dialog_selected_idx >= new_len && new_len > 0 {
+                            app.dialog_selected_idx = new_len - 1;
+                        }
+                    }
+                    app.push_toast(crate::ui::components::toast::Toast::success("Session deleted"));
+                }
+            }
+        }
+
         // 'd' = delete in AgentPicker (custom agents) and DraftPicker
         KeyCode::Char('d') if key.modifiers == KeyModifiers::NONE => {
             if app.active_dialog == ActiveDialog::AgentPicker {

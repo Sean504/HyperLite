@@ -82,7 +82,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Hint row
     let hint = Paragraph::new(Line::from(vec![
-        Span::styled(" ↑↓ navigate  Enter select  Ctrl+W delete  Esc close", Style::default().fg(app.theme.text_dim)),
+        Span::styled(" ↑↓ navigate  Enter select  Ctrl+D delete  Esc close", Style::default().fg(app.theme.text_dim)),
     ]));
     frame.render_widget(hint, chunks[2]);
 }
