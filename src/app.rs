@@ -601,11 +601,8 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
                     app.folder_input_buf.clear();
                     let path = std::path::PathBuf::from(&path_str);
                     if path.is_dir() {
-                        apply_folder(app, path.clone());
-                        app.folder_browser_path = path.clone();
-                        app.folder_browser_entries = load_dir_entries(&path);
-                        app.dialog_selected_idx = 0;
-                        close_dialog(app);
+                        // apply_folder opens IndexConfirm — don't close_dialog here
+                        apply_folder(app, path);
                     } else {
                         app.push_toast(crate::ui::components::toast::Toast::error(
                             format!("Not a directory: {}", path_str)
@@ -618,8 +615,8 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
                 match entry.as_deref() {
                     Some("[ ✓ Select this folder ]") => {
                         let path = app.folder_browser_path.clone();
+                        // apply_folder opens IndexConfirm — don't close_dialog here
                         apply_folder(app, path);
-                        close_dialog(app);
                     }
                     Some("..") => {
                         if let Some(parent) = app.folder_browser_path.parent().map(|p| p.to_path_buf()) {

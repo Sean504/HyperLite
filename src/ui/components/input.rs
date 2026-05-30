@@ -44,18 +44,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         ])
     };
 
-    let title_right = Line::from(vec![
-        Span::styled(
-            format!(" {} ", app.current_model_name()),
-            Style::default().fg(app.theme.text_muted),
-        ),
-    ]);
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
         .title(title_left)
-        .title_bottom(title_right)
         .style(Style::default().bg(app.theme.bg_panel));
 
     if is_empty && !is_streaming {

@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Sessions: fixed compact block (~¼ of typical terminal height, min 4)
     let session_h  = (inner.height / 4).max(4).min(12);
     // Bottom fixed sections
-    let folder_h   = 3_u16;
+    let folder_h   = 4_u16;
     let model_h    = 5_u16;
     let hardware_h = 5_u16;
     let bottom_h   = folder_h + model_h + hardware_h;
@@ -224,13 +224,36 @@ fn render_folder(frame: &mut Frame, area: Rect, app: &App) {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| app.working_dir.display().to_string());
 
-    let line = Line::from(vec![
-        Span::styled(
-            truncate(&folder_name, inner.width as usize),
-            Style::default().fg(app.theme.accent),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(line), inner);
+    // Check if this folder has a RAG index
+    let has_index = {
+        let dir = app.working_dir.to_string_lossy().to_string();
+        let conn = app.db.lock().unwrap();
+        crate::rag::store::get_index_for_dir(&conn, &dir)
+            .ok().flatten().is_some()
+    };
+
+    let status_line = if has_index {
+        Line::from(vec![
+            Span::styled("◆ indexed", Style::default().fg(app.theme.success)),
+        ])
+    } else if app.project_context_active {
+        Line::from(vec![
+            Span::styled("◆ git context", Style::default().fg(app.theme.accent)),
+        ])
+    } else {
+        Line::default()
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                truncate(&folder_name, inner.width as usize),
+                Style::default().fg(app.theme.accent),
+            ),
+        ]),
+        status_line,
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 // ── Model Info ────────────────────────────────────────────────────────────────

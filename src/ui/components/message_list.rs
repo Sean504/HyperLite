@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use crate::app::App;
 use super::message::render_message;
 
@@ -19,15 +19,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Build all display lines from messages
     let mut all_lines: Vec<Line<'static>> = vec![];
-
-    // Project context banner if active
-    if app.project_context_active {
-        all_lines.push(Line::from(ratatui::text::Span::styled(
-            format!(" 󰉋  Project context active: {}", app.project_name()),
-            Style::default().fg(app.theme.accent),
-        )));
-        all_lines.push(Line::default());
-    }
 
     for msg in &app.messages {
         let msg_lines = render_message(msg, &app.theme, width, app.show_tool_details);
@@ -55,6 +46,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let offset = app.scroll_offset.min(max_offset);
 
     let para = Paragraph::new(all_lines)
+        .wrap(Wrap { trim: false })
         .scroll((offset as u16, 0))
         .style(Style::default().bg(app.theme.bg));
 
