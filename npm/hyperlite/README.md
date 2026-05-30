@@ -39,7 +39,6 @@ On first launch, an animated setup wizard lets you download a model and the infe
 | Platform | Binary package |
 |---|---|
 | Linux x64 | `@hyperlite-ai/linux-x64` |
-| Linux ARM64 (Raspberry Pi 5, SBCs) | `@hyperlite-ai/linux-arm64` |
 | macOS Apple Silicon | `@hyperlite-ai/darwin-arm64` |
 | Windows x64 | `@hyperlite-ai/win32-x64` |
 
@@ -74,9 +73,6 @@ Custom agents can be created inside the app with `Ctrl+A`.
 
 ## Links
 
-- [Source on GitHub](https://github.com/Sean504/HyperLite)
-- [Releases](https://github.com/Sean504/HyperLite/releases)
-- [Full documentation](https://github.com/Sean504/HyperLite/blob/main/DOCS.md)
 - [hyperlite.org](https://hyperlite.org)
 
 ## License

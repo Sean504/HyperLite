@@ -50,8 +50,6 @@ Legacy `cmd.exe` may have rendering issues.
 ## Links
 
 - [hyperlite.org](https://hyperlite.org)
-- [Source](https://github.com/Sean504/HyperLite)
-- [Full documentation](https://github.com/Sean504/HyperLite/blob/main/DOCS.md)
 
 ## License
 

@@ -50,8 +50,6 @@ Or go to **System Settings → Privacy & Security** and click "Open Anyway".
 ## Links
 
 - [hyperlite.org](https://hyperlite.org)
-- [Source](https://github.com/Sean504/HyperLite)
-- [Full documentation](https://github.com/Sean504/HyperLite/blob/main/DOCS.md)
 
 ## License
 
