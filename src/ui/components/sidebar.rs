@@ -20,7 +20,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let session_h  = (inner.height / 4).max(4).min(12);
     // Bottom fixed sections
     let folder_h   = 4_u16;
-    let model_h    = 5_u16;
+    let model_h    = 3_u16;
     let hardware_h = 5_u16;
     let bottom_h   = folder_h + model_h + hardware_h;
     // Plan panel gets everything in between
@@ -270,56 +270,19 @@ fn render_model_info(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let mut lines: Vec<Line<'static>> = vec![];
     let model_name = app.current_model_name();
+    let backend    = app.current_backend_name();
+    let combined   = format!("{} ({})", model_name, backend);
 
-    lines.push(Line::from(vec![
-        Span::styled(
-            truncate(&model_name, inner.width as usize),
-            Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD),
-        ),
-    ]));
-
-    if let Some(family) = crate::models::codex::identify(&model_name) {
-        let caps: String = family.capabilities.iter().map(|c| format!("{} ", c.icon())).collect();
-        lines.push(Line::from(vec![
-            Span::styled(caps, Style::default().fg(app.theme.accent)),
-        ]));
-        lines.push(Line::from(vec![
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
             Span::styled(
-                truncate(family.description, inner.width as usize),
-                Style::default().fg(app.theme.text_muted),
+                truncate(&combined, inner.width as usize),
+                Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD),
             ),
-        ]));
-        let ctx_k = family.context_tokens / 1000;
-        lines.push(Line::from(vec![
-            Span::styled(format!("ctx {}k", ctx_k), Style::default().fg(app.theme.text_dim)),
-        ]));
-    }
-
-    let backend = app.current_backend_name();
-    lines.push(Line::from(vec![
-        Span::styled(format!("via {}", backend), Style::default().fg(app.theme.text_dim)),
-    ]));
-
-    // Active agent indicator
-    let agent_label = crate::tools::get_builtin_agent(&app.current_agent)
-        .map(|a| a.name.to_string())
-        .or_else(|| app.custom_agents.iter().find(|a| a.id == app.current_agent).map(|a| a.name.clone()))
-        .unwrap_or_else(|| app.current_agent.clone());
-    let agent_icon = match app.current_agent.as_str() {
-        "plan"  => "◎",
-        "build" => "⚒",
-        _       => "◈",
-    };
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("{} {}", agent_icon, agent_label),
-            Style::default().fg(app.theme.accent),
-        ),
-    ]));
-
-    frame.render_widget(Paragraph::new(lines), inner);
+        ])),
+        inner,
+    );
 }
 
 // ── Hardware ──────────────────────────────────────────────────────────────────
