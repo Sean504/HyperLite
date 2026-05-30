@@ -31,6 +31,7 @@ pub enum ActiveDialog {
     AgentEditor,
     DraftPicker,
     IndexConfirm,  // shown after opening a folder — ask if user wants to index it
+    RagSearch,     // text input for searching an index manually
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -658,6 +659,48 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
         return Ok(false);
     }
 
+    // RagSearch — type a query, press Enter to search the current folder's index
+    if app.active_dialog == ActiveDialog::RagSearch {
+        match key.code {
+            KeyCode::Esc => close_dialog(app),
+            KeyCode::Enter => {
+                let query = app.dialog_search_query.trim().to_string();
+                close_dialog(app);
+                if !query.is_empty() {
+                    let dir = app.working_dir.to_string_lossy().to_string();
+                    let db  = app.db.clone();
+                    let tx  = app.event_tx.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            let params = serde_json::json!({ "query": query, "top_k": 5 });
+                            // Scope to current working dir index only
+                            let conn = db.lock().unwrap();
+                            match crate::rag::store::get_index_for_dir(&conn, &dir) {
+                                Ok(Some(idx)) => {
+                                    drop(conn);
+                                    let p = serde_json::json!({ "query": params["query"], "index_name": idx.name, "top_k": 5 });
+                                    crate::tools::rag::search_index(&p, &db)
+                                }
+                                _ => Err(anyhow::anyhow!("No index found for this folder. Use 'Index Folder' first.")),
+                            }
+                        }).await;
+                        match result {
+                            Ok(Ok(text))  => { let _ = tx.send(crate::event::Event::ToastMsg { text, is_error: false }); }
+                            Ok(Err(e))    => { let _ = tx.send(crate::event::Event::ToastMsg { text: e.to_string(), is_error: true }); }
+                            Err(e)        => { let _ = tx.send(crate::event::Event::ToastMsg { text: e.to_string(), is_error: true }); }
+                        }
+                    });
+                }
+            }
+            KeyCode::Backspace => { app.dialog_search_query.pop(); }
+            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
+                app.dialog_search_query.push(c);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // IndexConfirm — ask user whether to index the just-opened folder
     if app.active_dialog == ActiveDialog::IndexConfirm {
         match key.code {
@@ -1068,6 +1111,43 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                 Some("Undo Last Message")  => undo_message(app).await?,
                 Some("Help")               => open_dialog(app, ActiveDialog::Help),
                 Some("Open Folder")        => open_folder_browser(app),
+                Some("Index Folder")       => open_dialog(app, ActiveDialog::IndexConfirm),
+                Some("Search Index")       => open_dialog(app, ActiveDialog::RagSearch),
+                Some("Clear Index")        => {
+                    let dir = app.working_dir.to_string_lossy().to_string();
+                    let db  = app.db.clone();
+                    let conn = db.lock().unwrap();
+                    match crate::rag::store::get_index_for_dir(&conn, &dir) {
+                        Ok(Some(idx)) => {
+                            drop(conn);
+                            let conn2 = db.lock().unwrap();
+                            let _ = crate::rag::store::delete_index(&conn2, &idx.name);
+                            app.push_toast(crate::ui::components::toast::Toast::success("Index cleared for this folder"));
+                        }
+                        _ => {
+                            drop(conn);
+                            app.push_toast(crate::ui::components::toast::Toast::info("No index found for this folder"));
+                        }
+                    }
+                }
+                Some("List Indexes")       => {
+                    let db = app.db.clone();
+                    let conn = db.lock().unwrap();
+                    match crate::rag::store::list_indexes(&conn) {
+                        Ok(indexes) if indexes.is_empty() => {
+                            app.push_toast(crate::ui::components::toast::Toast::info("No indexes yet. Open a folder and index it first."));
+                        }
+                        Ok(indexes) => {
+                            let lines: Vec<String> = indexes.iter().map(|i| {
+                                format!("{} — {} files · {} chunks", i.root_path, i.file_count, i.chunk_count)
+                            }).collect();
+                            app.push_toast(crate::ui::components::toast::Toast::info(lines.join("\n")));
+                        }
+                        Err(e) => {
+                            app.push_toast(crate::ui::components::toast::Toast::error(format!("Error: {}", e)));
+                        }
+                    }
+                }
                 Some("Quit")               => return Ok(()),
                 _ => {}
             }

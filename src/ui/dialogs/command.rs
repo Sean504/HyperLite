@@ -44,9 +44,13 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
         ],
         // ── Actions ───────────────────────────────────────────────────────────
         2 => vec![
-            Command { label: "Open in Editor",       desc: "Edit input in $EDITOR",          shortcut: "Ctrl+E" },
-            Command { label: "Copy Last Response",   desc: "Copy assistant message",         shortcut: "Ctrl+C" },
-            Command { label: "Undo Last Message",    desc: "Remove last exchange",           shortcut: "Ctrl+Z" },
+            Command { label: "Open in Editor",       desc: "Edit input in $EDITOR",                               shortcut: "Ctrl+E" },
+            Command { label: "Copy Last Response",   desc: "Copy assistant message",                              shortcut: "Ctrl+C" },
+            Command { label: "Undo Last Message",    desc: "Remove last exchange",                                shortcut: "Ctrl+Z" },
+            Command { label: "Index Folder",         desc: "Index current folder for AI semantic search (RAG)",   shortcut: "" },
+            Command { label: "Search Index",         desc: "Search the current folder index by keyword/concept",  shortcut: "" },
+            Command { label: "Clear Index",          desc: "Remove the index for the current working folder",     shortcut: "" },
+            Command { label: "List Indexes",         desc: "Show all indexed folders with file and chunk counts", shortcut: "" },
         ],
         // ── Options ───────────────────────────────────────────────────────────
         3 => vec![

@@ -26,7 +26,53 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         ActiveDialog::AgentEditor    => agent_picker::render_editor(frame, area, app),
         ActiveDialog::DraftPicker    => draft_picker::render(frame, area, app),
         ActiveDialog::IndexConfirm   => render_index_confirm(frame, area, app),
+        ActiveDialog::RagSearch      => render_rag_search(frame, area, app),
     }
+}
+
+fn render_rag_search(frame: &mut Frame, area: Rect, app: &mut App) {
+    let dialog = centered_rect(52, 6, area);
+    frame.render_widget(Clear, dialog);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.accent))
+        .title(Line::from(vec![
+            Span::styled(" Search Index ", Style::default().fg(app.theme.accent)),
+        ]));
+    let inner = block.inner(dialog);
+    frame.render_widget(block, dialog);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let folder = app.working_dir.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| app.working_dir.to_string_lossy().to_string());
+
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("  Folder: ", Style::default().fg(app.theme.text_dim)),
+                Span::styled(folder, Style::default().fg(app.theme.text_dim)),
+            ]),
+            Line::from(vec![
+                Span::styled(" > ", Style::default().fg(app.theme.primary)),
+                Span::styled(app.dialog_search_query.clone(), Style::default().fg(app.theme.text)),
+                Span::styled("█", Style::default().fg(app.theme.accent)),
+            ]),
+        ]),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Enter to search  ·  Esc to cancel", Style::default().fg(app.theme.text_dim)),
+        ])),
+        chunks[1],
+    );
 }
 
 fn render_index_confirm(frame: &mut Frame, area: Rect, app: &mut App) {
