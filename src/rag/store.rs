@@ -117,6 +117,21 @@ pub fn get_latest_index(conn: &Connection) -> Result<Option<RagIndex>> {
     Ok(rows.next().and_then(|r| r.ok()))
 }
 
+/// Find an index whose root_path matches the given working directory.
+pub fn get_index_for_dir(conn: &Connection, dir: &str) -> Result<Option<RagIndex>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, root_path, file_count, chunk_count FROM rag_indexes WHERE root_path = ?1 LIMIT 1"
+    )?;
+    let mut rows = stmt.query_map([dir], |row| Ok(RagIndex {
+        id:          row.get(0)?,
+        name:        row.get(1)?,
+        root_path:   row.get(2)?,
+        file_count:  row.get(3)?,
+        chunk_count: row.get(4)?,
+    }))?;
+    Ok(rows.next().and_then(|r| r.ok()))
+}
+
 // ── Chunk storage ─────────────────────────────────────────────────────────────
 
 pub fn insert_chunk(

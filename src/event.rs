@@ -39,6 +39,9 @@ pub enum Event {
     ModelDownloadDone     { model: String },
     ModelDownloadFailed   { model: String, error: String },
 
+    // Background task result toast (is_error=true → error style)
+    ToastMsg { text: String, is_error: bool },
+
     // App lifecycle
     Quit,
 }

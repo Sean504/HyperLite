@@ -149,9 +149,9 @@ pub static ALL_TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name:        "index_dir",
-        description: "Index a directory for semantic search (RAG). Chunks files and creates local embeddings. Call this before using search_index. Skips .git, node_modules, target, and binary files automatically.",
-        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"Directory to index (default: current directory)"},"name":{"type":"string","description":"Name for this index (default: directory name)"},"extensions":{"type":"array","items":{"type":"string"},"description":"File extensions to include, e.g. [\"rs\",\"toml\"]. Default: all common code and text files."}},"required":["path"]}"#,
-        requires_permission: false,
+        description: "Index the current working directory for semantic search (RAG). Only indexes the active project folder. Skips .git, node_modules, target, and binary files automatically.",
+        parameters:  r#"{"type":"object","properties":{"extensions":{"type":"array","items":{"type":"string"},"description":"File extensions to include, e.g. [\"rs\",\"toml\"]. Default: all common code and text files."}}}"#,
+        requires_permission: true,
     },
     ToolDef {
         name:        "search_index",

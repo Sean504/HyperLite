@@ -10,20 +10,14 @@ use crate::rag::{chunker, embed_batch, embed_one, store};
 // ── index_dir ─────────────────────────────────────────────────────────────────
 
 pub fn index_dir(params: &Value, cwd: &PathBuf, db: &crate::db::Db) -> Result<String> {
-    let path_str = params["path"].as_str().unwrap_or(".");
-    let dir = resolve_path(path_str, cwd);
+    // Always index the current working directory — the model cannot specify an arbitrary path.
+    let dir = cwd.clone();
 
     if !dir.exists() {
-        anyhow::bail!("Directory not found: {}", dir.display());
+        anyhow::bail!("Working directory not found: {}", dir.display());
     }
 
-    let name = params["name"].as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            dir.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "index".to_string())
-        });
+    let name = dir.to_string_lossy().to_string(); // index keyed by full path
 
     let custom_exts: Vec<String> = params["extensions"]
         .as_array()
@@ -201,25 +195,26 @@ fn resolve_path(path: &str, cwd: &PathBuf) -> PathBuf {
     if p.is_absolute() { p } else { cwd.join(p) }
 }
 
-/// Build a RAG context string from the most relevant chunks for a given query.
-/// Used by the chat flow to inject context before sending to the model.
-pub fn retrieve_context(query: &str, db: &crate::db::Db, top_k: usize) -> Option<String> {
+/// Build a RAG context string scoped strictly to the given working directory's index.
+/// Returns None if no index exists for this directory or nothing is relevant.
+pub fn retrieve_context(query: &str, db: &crate::db::Db, working_dir: &str, top_k: usize) -> Option<String> {
     let conn = db.lock().ok()?;
-    let index = store::get_latest_index(&conn).ok()??;
+    // Only use the index that was created for THIS working directory
+    let index = store::get_index_for_dir(&conn, working_dir).ok()??;
     let query_emb = embed_one(query).ok()?;
     let results = store::search(&conn, &index.id, &query_emb, top_k).ok()?;
     if results.is_empty() { return None; }
 
-    let mut ctx = format!(
-        "Relevant context from codebase index '{}':\n\n",
-        index.name
-    );
+    let mut relevant = vec![];
     for chunk in &results {
-        if chunk.score < 0.25 { continue; } // skip low-relevance
-        ctx.push_str(&format!("// {}\n{}\n\n", chunk.file_path, chunk.chunk_text.trim()));
+        if chunk.score < 0.25 { continue; }
+        relevant.push(chunk);
     }
-    if ctx.trim().ends_with(&format!("'{}':", index.name)) {
-        return None; // nothing passed the score threshold
+    if relevant.is_empty() { return None; }
+
+    let mut ctx = String::from("Relevant context from the current project:\n\n");
+    for chunk in relevant {
+        ctx.push_str(&format!("// {}\n{}\n\n", chunk.file_path, chunk.chunk_text.trim()));
     }
     Some(ctx)
 }

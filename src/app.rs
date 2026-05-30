@@ -30,6 +30,7 @@ pub enum ActiveDialog {
     AgentPicker,
     AgentEditor,
     DraftPicker,
+    IndexConfirm,  // shown after opening a folder — ask if user wants to index it
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -439,6 +440,13 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                 format!("Download failed: {}", error)
             ));
         }
+        Event::ToastMsg { text, is_error } => {
+            if is_error {
+                app.push_toast(crate::ui::components::toast::Toast::error(text));
+            } else {
+                app.push_toast(crate::ui::components::toast::Toast::success(text));
+            }
+        }
         Event::Quit => return true,
         _ => {}
     }
@@ -644,6 +652,38 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
             }
             KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
                 app.folder_input_buf.push(c);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    // IndexConfirm — ask user whether to index the just-opened folder
+    if app.active_dialog == ActiveDialog::IndexConfirm {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                close_dialog(app);
+                let dir = app.working_dir.clone();
+                let db  = app.db.clone();
+                let tx  = app.event_tx.clone();
+                app.push_toast(crate::ui::components::toast::Toast::info("Indexing folder…"));
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        crate::tools::rag::index_dir(
+                            &serde_json::Value::Object(Default::default()),
+                            &dir,
+                            &db,
+                        )
+                    }).await;
+                    match result {
+                        Ok(Ok(msg))  => { let _ = tx.send(crate::event::Event::ToastMsg { text: msg,                               is_error: false }); }
+                        Ok(Err(e))   => { let _ = tx.send(crate::event::Event::ToastMsg { text: format!("Index error: {}", e),    is_error: true  }); }
+                        Err(e)       => { let _ = tx.send(crate::event::Event::ToastMsg { text: format!("Index error: {}", e),    is_error: true  }); }
+                    }
+                });
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                close_dialog(app);
             }
             _ => {}
         }
@@ -911,6 +951,8 @@ fn apply_folder(app: &mut App, path: std::path::PathBuf) {
     app.project_ctx = Some(crate::project::scan(&path));
     app.project_context_active = app.project_ctx.as_ref().map(|c| c.is_git).unwrap_or(false);
     app.push_toast(crate::ui::components::toast::Toast::success(format!("Opened: {}", name)));
+    // Offer to index this folder for RAG context
+    open_dialog(app, ActiveDialog::IndexConfirm);
 }
 
 fn open_dialog(app: &mut App, dialog: ActiveDialog) {
@@ -1156,10 +1198,11 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
         ChatMessage { role: "system".to_string(), content: system },
     ];
 
-    // Inject RAG context if an index exists and the query is relevant
+    // Inject RAG context scoped strictly to the current working directory's index
     if let Some(user_query) = app.messages.last().map(|m| m.text_content()) {
         if !user_query.is_empty() {
-            if let Some(rag_ctx) = crate::tools::rag::retrieve_context(&user_query, &app.db, 5) {
+            let working_dir = app.working_dir.to_string_lossy().to_string();
+            if let Some(rag_ctx) = crate::tools::rag::retrieve_context(&user_query, &app.db, &working_dir, 5) {
                 chat.push(ChatMessage {
                     role:    "system".to_string(),
                     content: rag_ctx,
