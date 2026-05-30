@@ -21,6 +21,7 @@ pub mod search;
 pub mod files;
 pub mod shell;
 pub mod http;
+pub mod rag;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -144,6 +145,30 @@ pub static ALL_TOOLS: &[ToolDef] = &[
         name:        "http_fetch",
         description: "Fetch the content of a URL. Returns the text content of the page.",
         parameters:  r#"{"type":"object","properties":{"url":{"type":"string"},"extract_text":{"type":"boolean","default":true}},"required":["url"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "index_dir",
+        description: "Index a directory for semantic search (RAG). Chunks files and creates local embeddings. Call this before using search_index. Skips .git, node_modules, target, and binary files automatically.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"Directory to index (default: current directory)"},"name":{"type":"string","description":"Name for this index (default: directory name)"},"extensions":{"type":"array","items":{"type":"string"},"description":"File extensions to include, e.g. [\"rs\",\"toml\"]. Default: all common code and text files."}},"required":["path"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "search_index",
+        description: "Semantic search over an indexed codebase or directory. Returns the most relevant chunks. Use after index_dir.",
+        parameters:  r#"{"type":"object","properties":{"query":{"type":"string","description":"What to search for"},"index_name":{"type":"string","description":"Which index to search (default: most recently created)"},"top_k":{"type":"integer","description":"Number of results (default: 5, max: 20)"}},"required":["query"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "clear_index",
+        description: "Delete a RAG index and all its stored embeddings.",
+        parameters:  r#"{"type":"object","properties":{"name":{"type":"string","description":"Index name to delete"}},"required":["name"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "list_indexes",
+        description: "List all available RAG indexes with their file and chunk counts.",
+        parameters:  r#"{"type":"object","properties":{}}"#,
         requires_permission: false,
     },
 ];
@@ -857,27 +882,32 @@ pub async fn execute(
     call:    &ToolCall,
     cwd:     &PathBuf,
     client:  &reqwest::Client,
+    db:      &crate::db::Db,
 ) -> ToolResult {
     let result = match call.name.as_str() {
-        "make_plan"  => files::make_plan(&call.parameters),
-        "search"     => search::execute(&call.parameters).await,
-        "read_file"  => files::read_file(&call.parameters, cwd),
-        "batch_read" => files::batch_read(&call.parameters, cwd),
-        "write_file" => files::write_file(&call.parameters, cwd),
-        "edit_file"  => files::edit_file(&call.parameters, cwd),
-        "list_dir"   => files::list_dir(&call.parameters, cwd),
-        "grep"       => files::grep(&call.parameters, cwd),
-        "glob"       => files::glob_files(&call.parameters, cwd),
-        "create_dir" => files::create_dir(&call.parameters, cwd),
-        "delete_file"=> files::delete_file(&call.parameters, cwd),
-        "move_file"  => files::move_file(&call.parameters, cwd),
-        "copy_file"  => files::copy_file(&call.parameters, cwd),
-        "append_file"=> files::append_file(&call.parameters, cwd),
-        "file_info"  => files::file_info(&call.parameters, cwd),
-        "tree"       => files::tree(&call.parameters, cwd),
-        "shell"      => shell::execute(&call.parameters, cwd).await,
-        "http_fetch" => http::fetch(&call.parameters, client).await,
-        _            => Err(anyhow::anyhow!("Unknown tool: {}", call.name)),
+        "make_plan"    => files::make_plan(&call.parameters),
+        "search"       => search::execute(&call.parameters).await,
+        "read_file"    => files::read_file(&call.parameters, cwd),
+        "batch_read"   => files::batch_read(&call.parameters, cwd),
+        "write_file"   => files::write_file(&call.parameters, cwd),
+        "edit_file"    => files::edit_file(&call.parameters, cwd),
+        "list_dir"     => files::list_dir(&call.parameters, cwd),
+        "grep"         => files::grep(&call.parameters, cwd),
+        "glob"         => files::glob_files(&call.parameters, cwd),
+        "create_dir"   => files::create_dir(&call.parameters, cwd),
+        "delete_file"  => files::delete_file(&call.parameters, cwd),
+        "move_file"    => files::move_file(&call.parameters, cwd),
+        "copy_file"    => files::copy_file(&call.parameters, cwd),
+        "append_file"  => files::append_file(&call.parameters, cwd),
+        "file_info"    => files::file_info(&call.parameters, cwd),
+        "tree"         => files::tree(&call.parameters, cwd),
+        "shell"        => shell::execute(&call.parameters, cwd).await,
+        "http_fetch"   => http::fetch(&call.parameters, client).await,
+        "index_dir"    => tokio::task::block_in_place(|| rag::index_dir(&call.parameters, cwd, db)),
+        "search_index" => tokio::task::block_in_place(|| rag::search_index(&call.parameters, db)),
+        "clear_index"  => tokio::task::block_in_place(|| rag::clear_index(&call.parameters, db)),
+        "list_indexes" => tokio::task::block_in_place(|| rag::list_indexes(db)),
+        _              => Err(anyhow::anyhow!("Unknown tool: {}", call.name)),
     };
 
     match result {

@@ -1155,6 +1155,19 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     let mut chat: Vec<ChatMessage> = vec![
         ChatMessage { role: "system".to_string(), content: system },
     ];
+
+    // Inject RAG context if an index exists and the query is relevant
+    if let Some(user_query) = app.messages.last().map(|m| m.text_content()) {
+        if !user_query.is_empty() {
+            if let Some(rag_ctx) = crate::tools::rag::retrieve_context(&user_query, &app.db, 5) {
+                chat.push(ChatMessage {
+                    role:    "system".to_string(),
+                    content: rag_ctx,
+                });
+            }
+        }
+    }
+
     for msg in &app.messages {
         let role = match msg.role {
             Role::User      => "user",
@@ -1371,7 +1384,7 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         app.push_toast(crate::ui::components::toast::Toast::info(toast_label));
 
         // Execute (this is async for shell; synchronous for file ops)
-        let result = crate::tools::execute(call, &app.working_dir, &app.http_client).await;
+        let result = crate::tools::execute(call, &app.working_dir, &app.http_client, &app.db).await;
 
         let (status, content) = if result.is_error {
             ("error", result.error.unwrap_or_else(|| "Unknown error".to_string()))

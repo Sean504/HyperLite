@@ -74,6 +74,7 @@ regex            = "1"
 walkdir          = "2"        # scanning model directories
 which            = "7"        # finding llama-server / llamafile in PATH
 libc             = "0.2"      # getuid() for root detection
+fastembed        = "4"        # local ONNX embedding models for RAG
 sysinfo          = { version = "0.32", default-features = false, features = ["system", "disk", "network"] }
 scraper          = "0.22"     # HTML parsing for web search results
 url              = "2"        # URL encoding for search queries
