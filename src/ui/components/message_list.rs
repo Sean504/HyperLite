@@ -35,10 +35,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    let total_lines = all_lines.len();
+    // Count visual lines after wrapping so scroll calculation stays accurate.
+    // Without this, wrapped lines inflate visual height but max_offset stays too
+    // small, hiding the last messages under the input bar.
+    let visual_lines = visual_line_count(&all_lines, width as usize);
 
     // Sticky bottom: if scroll_offset is at natural bottom, keep it there
-    let max_offset = total_lines.saturating_sub(height);
+    let max_offset = visual_lines.saturating_sub(height);
     if app.scroll_stick_bottom || app.scroll_offset >= max_offset {
         app.scroll_offset = max_offset;
     }
@@ -53,7 +56,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(para, inner);
 
     // Scrollbar
-    if app.show_scrollbar && total_lines > height {
+    if app.show_scrollbar && visual_lines > height {
         let mut sb_state = ScrollbarState::new(max_offset).position(offset);
         let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
@@ -69,4 +72,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         };
         frame.render_stateful_widget(sb, sb_area, &mut sb_state);
     }
+}
+
+/// Count the total visual lines after word-wrap at the given width.
+fn visual_line_count(lines: &[Line], width: usize) -> usize {
+    if width == 0 { return lines.len(); }
+    lines.iter().map(|line| {
+        let w: usize = line.spans.iter()
+            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+        if w == 0 { 1 } else { (w + width - 1) / width }
+    }).sum()
 }

@@ -32,6 +32,7 @@ pub mod llamafile;
 pub mod vllm;
 pub mod gpt4all;
 pub mod direct;
+pub mod ollama;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -114,6 +115,7 @@ pub enum BackendKind {
     Vllm,
     Gpt4All,
     DirectGguf,
+    Ollama,
     OpenAICompat,  // generic fallback
 }
 
@@ -131,6 +133,7 @@ impl BackendKind {
             BackendKind::Vllm          => "vLLM",
             BackendKind::Gpt4All       => "GPT4All",
             BackendKind::DirectGguf    => "Direct GGUF",
+            BackendKind::Ollama        => "Ollama",
             BackendKind::OpenAICompat  => "OpenAI-compat",
         }
     }
@@ -149,6 +152,7 @@ impl BackendKind {
             BackendKind::Vllm          => 8000,
             BackendKind::Gpt4All       => 4891,
             BackendKind::DirectGguf    => 8080,
+            BackendKind::Ollama        => 11434,
             BackendKind::OpenAICompat  => 8080,
         }
     }
@@ -206,6 +210,11 @@ impl BackendKind {
             BackendKind::DirectGguf => vec![
                 ModelFormat::Gguf,
                 ModelFormat::GgmlLegacy,
+            ],
+            BackendKind::Ollama => vec![
+                ModelFormat::Gguf,
+                ModelFormat::GgmlLegacy,
+                ModelFormat::SafeTensors,
             ],
             BackendKind::OpenAICompat  => vec![ModelFormat::Unknown],
         }
@@ -398,6 +407,9 @@ impl ProviderRegistry {
         )));
         reg.add(Box::new(gpt4all::Gpt4AllProvider::new(
             client.clone(), "http://localhost:4891",
+        )));
+        reg.add(Box::new(ollama::OllamaProvider::new(
+            client.clone(), "http://localhost:11434",
         )));
         reg.add(Box::new(direct::DirectGgufProvider::new(client.clone(), hardware)));
 
