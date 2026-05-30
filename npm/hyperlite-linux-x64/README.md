@@ -1,45 +1,48 @@
-# HyperLite
+# @hyperlite-ai/linux-x64
 
-A terminal-native local LLM chat client. Fast, offline, and agentic — runs entirely on your machine using [Ollama](https://ollama.com).
+Native Linux x64 binary for [HyperLite](https://hyperlite.org) — terminal-native local AI chat.
 
-## Install
+> **This is a platform binary package.** Install the main package instead:
+> ```bash
+> npm install -g hyperlite-ai
+> ```
 
-```bash
-npm install -g hyperlite-ai
-```
+---
 
-## Run
+## What is HyperLite?
 
-```bash
-hyperlite
-```
+HyperLite is a Rust TUI that runs AI models entirely on your local hardware. No cloud, no API keys, no telemetry.
+
+- Offline-first — works without internet after the initial model download
+- Agentic — the model can read/write files, run shell commands, search the web
+- Connects to llamafile (auto-managed), llama.cpp, LM Studio, KoboldCpp, vLLM, and more
+- Persistent multi-session history in SQLite
+
+## Contents
+
+This package contains a single precompiled binary: `hl` (ELF, Linux x64, glibc).
+
+Built from: `x86_64-unknown-linux-gnu` with Rust stable.
 
 ## Requirements
 
-- [Ollama](https://ollama.com) installed and running
-- A downloaded model (e.g. `ollama pull qwen2.5-coder:14b`)
-- Node.js 16+
+- Linux x64 with glibc 2.17+
+- Node.js 16+ (for the npm launcher only)
 
-## Features
+## Usage
 
-- Chat with any local Ollama model
-- Agentic coding tools — read, write, edit, search files directly from chat
-- Multi-session history with persistent storage
-- Tabbed command palette (Ctrl+P)
-- Visual folder browser (Ctrl+O) — open any repo as working directory
-- Download models from inside the app
-- Syntax-highlighted responses with markdown rendering
-- Hardware detection — recommends models for your GPU/RAM
+```bash
+npm install -g hyperlite-ai   # installs this package automatically
+hl                             # launch
+hyperlite                      # same
+```
 
-## Supported Platforms
+## Links
 
-| Platform | Architecture |
-|----------|-------------|
-| Windows  | x64 |
-| Linux    | x64 |
-| macOS    | Apple Silicon (arm64) |
-| macOS    | Intel (x64) |
+- [hyperlite.org](https://hyperlite.org)
+- [Source](https://github.com/Sean504/HyperLite)
+- [Full documentation](https://github.com/Sean504/HyperLite/blob/main/DOCS.md)
 
-## Source
+## License
 
-[github.com/Sean504/HyperLite](https://github.com/Sean504/HyperLite)
+MIT

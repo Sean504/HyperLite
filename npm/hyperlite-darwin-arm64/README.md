@@ -1,45 +1,58 @@
-# HyperLite
+# @hyperlite-ai/darwin-arm64
 
-A terminal-native local LLM chat client. Fast, offline, and agentic — runs entirely on your machine using [Ollama](https://ollama.com).
+Native macOS Apple Silicon binary for [HyperLite](https://hyperlite.org) — terminal-native local AI chat.
 
-## Install
+> **This is a platform binary package.** Install the main package instead:
+> ```bash
+> npm install -g hyperlite-ai
+> ```
 
-```bash
-npm install -g hyperlite-ai
-```
+---
 
-## Run
+## What is HyperLite?
 
-```bash
-hyperlite
-```
+HyperLite is a Rust TUI that runs AI models entirely on your local hardware. No cloud, no API keys, no telemetry.
+
+- Offline-first — works without internet after the initial model download
+- Agentic — the model can read/write files, run shell commands, search the web
+- Connects to llamafile (auto-managed), llama.cpp, LM Studio, KoboldCpp, vLLM, and more
+- Persistent multi-session history in SQLite
+
+## Contents
+
+This package contains a single precompiled binary: `hl` (Mach-O, ARM64, macOS).
+
+Built from: `aarch64-apple-darwin` with Rust stable on macOS 14 (Sonoma).
 
 ## Requirements
 
-- [Ollama](https://ollama.com) installed and running
-- A downloaded model (e.g. `ollama pull qwen2.5-coder:14b`)
-- Node.js 16+
+- macOS 11+ on Apple Silicon (M1 / M2 / M3 / M4)
+- Node.js 16+ (for the npm launcher only)
 
-## Features
+## Usage
 
-- Chat with any local Ollama model
-- Agentic coding tools — read, write, edit, search files directly from chat
-- Multi-session history with persistent storage
-- Tabbed command palette (Ctrl+P)
-- Visual folder browser (Ctrl+O) — open any repo as working directory
-- Download models from inside the app
-- Syntax-highlighted responses with markdown rendering
-- Hardware detection — recommends models for your GPU/RAM
+```bash
+npm install -g hyperlite-ai   # installs this package automatically on Apple Silicon
+hl                             # launch from Terminal or iTerm2
+hyperlite                      # same
+```
 
-## Supported Platforms
+## Note
 
-| Platform | Architecture |
-|----------|-------------|
-| Windows  | x64 |
-| Linux    | x64 |
-| macOS    | Apple Silicon (arm64) |
-| macOS    | Intel (x64) |
+On first launch, macOS Gatekeeper may block the binary if it is not notarised. If you see a security warning, run:
 
-## Source
+```bash
+xattr -d com.apple.quarantine $(which hl)
+```
 
-[github.com/Sean504/HyperLite](https://github.com/Sean504/HyperLite)
+Or go to **System Settings → Privacy & Security** and click "Open Anyway".
+
+## Links
+
+- [hyperlite.org](https://hyperlite.org)
+- [Source](https://github.com/Sean504/HyperLite)
+- [Full documentation](https://github.com/Sean504/HyperLite/blob/main/DOCS.md)
+
+## License
+
+MIT

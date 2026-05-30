@@ -1,45 +1,58 @@
-# HyperLite
+# @hyperlite-ai/win32-x64
 
-A terminal-native local LLM chat client. Fast, offline, and agentic — runs entirely on your machine using [Ollama](https://ollama.com).
+Native Windows x64 binary for [HyperLite](https://hyperlite.org) — terminal-native local AI chat.
 
-## Install
+> **This is a platform binary package.** Install the main package instead:
+> ```bash
+> npm install -g hyperlite-ai
+> ```
 
-```bash
-npm install -g hyperlite-ai
-```
+---
 
-## Run
+## What is HyperLite?
 
-```bash
-hyperlite
-```
+HyperLite is a Rust TUI that runs AI models entirely on your local hardware. No cloud, no API keys, no telemetry.
+
+- Offline-first — works without internet after the initial model download
+- Agentic — the model can read/write files, run shell commands, search the web
+- Connects to llamafile (auto-managed), llama.cpp, LM Studio, KoboldCpp, vLLM, and more
+- Persistent multi-session history in SQLite
+
+## Contents
+
+This package contains a single precompiled binary: `hl.exe` (PE32+, Windows x64).
+
+Built from: `x86_64-pc-windows-msvc` with Rust stable.
 
 ## Requirements
 
-- [Ollama](https://ollama.com) installed and running
-- A downloaded model (e.g. `ollama pull qwen2.5-coder:14b`)
-- Node.js 16+
+- Windows 10 or 11 (x64)
+- Node.js 16+ (for the npm launcher only)
+- A terminal that supports VT sequences — **Windows Terminal** recommended
 
-## Features
+## Usage
 
-- Chat with any local Ollama model
-- Agentic coding tools — read, write, edit, search files directly from chat
-- Multi-session history with persistent storage
-- Tabbed command palette (Ctrl+P)
-- Visual folder browser (Ctrl+O) — open any repo as working directory
-- Download models from inside the app
-- Syntax-highlighted responses with markdown rendering
-- Hardware detection — recommends models for your GPU/RAM
+```powershell
+npm install -g hyperlite-ai   # installs this package automatically on Windows
+hl                             # launch from PowerShell or Windows Terminal
+hyperlite                      # same
+```
 
-## Supported Platforms
+## Note on terminals
 
-| Platform | Architecture |
-|----------|-------------|
-| Windows  | x64 |
-| Linux    | x64 |
-| macOS    | Apple Silicon (arm64) |
-| macOS    | Intel (x64) |
+HyperLite renders a full TUI using crossterm and Windows Console API. It works in:
+- Windows Terminal ✓ (recommended)
+- PowerShell 7 in Windows Terminal ✓
+- Git Bash / WSL terminal ✓ (runs the Windows binary via interop)
 
-## Source
+Legacy `cmd.exe` may have rendering issues.
 
-[github.com/Sean504/HyperLite](https://github.com/Sean504/HyperLite)
+## Links
+
+- [hyperlite.org](https://hyperlite.org)
+- [Source](https://github.com/Sean504/HyperLite)
+- [Full documentation](https://github.com/Sean504/HyperLite/blob/main/DOCS.md)
+
+## License
+
+MIT
