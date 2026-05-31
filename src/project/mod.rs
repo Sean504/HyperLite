@@ -26,6 +26,9 @@ pub struct ProjectContext {
     pub git_branch:       Option<String>,
     pub git_remote:       Option<String>,
     pub recent_commits:   Vec<GitCommit>,
+    pub git_status:       Option<String>,   // git status --short
+    pub git_diff_stat:    Option<String>,   // git diff --stat
+    pub git_unpushed:     Vec<String>,      // commits ahead of remote
     pub tech_stack:       TechStack,
     pub file_stats:       FileStats,
     pub readme_excerpt:   Option<String>,
@@ -134,6 +137,11 @@ pub fn scan(dir: &Path) -> ProjectContext {
     ctx.git_branch  = git_branch(dir);
     ctx.git_remote  = git_remote(dir);
     ctx.recent_commits = git_recent_commits(dir, 8);
+    if ctx.is_git {
+        ctx.git_status    = git_status(dir);
+        ctx.git_diff_stat = git_diff_stat(dir);
+        ctx.git_unpushed  = git_unpushed_commits(dir);
+    }
 
     // File scan
     let (lang_map, file_stats) = scan_files(dir);
@@ -245,6 +253,31 @@ pub fn build_system_prefix(ctx: &ProjectContext) -> String {
         lines.push(format!("**Key files:** {}", files.join(", ")));
     }
 
+    // Git working tree state
+    if ctx.is_git {
+        if !ctx.git_unpushed.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("**Unpushed commits ({}):**", ctx.git_unpushed.len()));
+            for c in ctx.git_unpushed.iter().take(5) {
+                lines.push(format!("  {}", c));
+            }
+        }
+        if let Some(ref status) = ctx.git_status {
+            if !status.trim().is_empty() {
+                lines.push(String::new());
+                lines.push("**Working tree (git status):**".to_string());
+                lines.push(format!("```\n{}\n```", status.trim()));
+            }
+        }
+        if let Some(ref diff_stat) = ctx.git_diff_stat {
+            if !diff_stat.trim().is_empty() {
+                lines.push(String::new());
+                lines.push("**Changed files (git diff --stat):**".to_string());
+                lines.push(format!("```\n{}\n```", diff_stat.trim()));
+            }
+        }
+    }
+
     lines.push(String::new());
     lines.push("You are a helpful AI assistant working inside this project. Use the project context above to give accurate, relevant answers.".to_string());
 
@@ -319,6 +352,45 @@ fn git_recent_commits(dir: &Path, n: usize) -> Vec<GitCommit> {
             })
         })
         .collect()
+}
+
+fn git_status(dir: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .args(["status", "--short"])
+        .current_dir(dir)
+        .output().ok()?;
+    if out.status.success() {
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    } else { None }
+}
+
+fn git_diff_stat(dir: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .args(["diff", "--stat"])
+        .current_dir(dir)
+        .output().ok()?;
+    if out.status.success() {
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    } else { None }
+}
+
+fn git_unpushed_commits(dir: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .args(["log", "--oneline", "@{u}..HEAD"])
+        .current_dir(dir)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        }
+        _ => vec![],
+    }
 }
 
 // ── File scanner ──────────────────────────────────────────────────────────────

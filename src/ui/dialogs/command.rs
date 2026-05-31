@@ -33,9 +33,11 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
         ],
         // ── Agent ─────────────────────────────────────────────────────────────
         1 => vec![
-            Command { label: "Switch Agent",     desc: "Change agent mode (General/Build/Plan/Custom)", shortcut: "Ctrl+A" },
-            Command { label: "Switch Model",     desc: "Choose a local model",                          shortcut: "Ctrl+M" },
-            Command { label: "Cycle Model Next", desc: "Next model in list",                            shortcut: "Alt+M" },
+            Command { label: "Switch Agent",          desc: "Change agent mode (General/Build/Plan/Custom)", shortcut: "Ctrl+A" },
+            Command { label: "Switch Model",          desc: "Choose a local model",                          shortcut: "Ctrl+M" },
+            Command { label: "Cycle Model Next",      desc: "Next model in list",                            shortcut: "Alt+M" },
+            Command { label: "Enable Git Context",    desc: "Inject git branch/status/diff into AI context", shortcut: "" },
+            Command { label: "Disable Git Context",   desc: "Stop injecting git context into AI prompts",    shortcut: "" },
             Command { label: "Index Folder",     desc: "Index current folder for AI semantic search",   shortcut: "" },
             Command { label: "Search Index",     desc: "Search the current folder index",               shortcut: "" },
             Command { label: "Clear Index",      desc: "Remove the index for the current folder",       shortcut: "" },

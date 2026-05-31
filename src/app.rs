@@ -30,7 +30,8 @@ pub enum ActiveDialog {
     AgentPicker,
     AgentEditor,
     DraftPicker,
-    IndexConfirm,  // shown after opening a folder — ask if user wants to index it
+    GitConfirm,    // shown on folder open when git repo detected — opt into git agent
+    IndexConfirm,  // shown after git confirm — ask if user wants to RAG index
     RagSearch,     // text input for searching an index manually
     MemoryInput,   // text input for saving a new memory fact
 }
@@ -705,6 +706,22 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
         return Ok(false);
     }
 
+    // GitConfirm — opt into git agent on folder open
+    if app.active_dialog == ActiveDialog::GitConfirm {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.project_context_active = true;
+                app.push_toast(crate::ui::components::toast::Toast::success("Git agent enabled. Branch, status and diff will be included in every prompt."));
+                open_dialog(app, ActiveDialog::IndexConfirm);
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                open_dialog(app, ActiveDialog::IndexConfirm);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // MemoryInput — type a fact to save to persistent memory
     if app.active_dialog == ActiveDialog::MemoryInput {
         match key.code {
@@ -1021,10 +1038,14 @@ fn apply_folder(app: &mut App, path: std::path::PathBuf) {
         .unwrap_or_else(|| path.display().to_string());
     app.working_dir = path.clone();
     app.project_ctx = Some(crate::project::scan(&path));
-    app.project_context_active = app.project_ctx.as_ref().map(|c| c.is_git).unwrap_or(false);
     app.push_toast(crate::ui::components::toast::Toast::success(format!("Opened: {}", name)));
-    // Offer to index this folder for RAG context
-    open_dialog(app, ActiveDialog::IndexConfirm);
+    // If git repo, ask about git agent first — then IndexConfirm follows
+    let is_git = app.project_ctx.as_ref().map(|c| c.is_git).unwrap_or(false);
+    if is_git {
+        open_dialog(app, ActiveDialog::GitConfirm);
+    } else {
+        open_dialog(app, ActiveDialog::IndexConfirm);
+    }
 }
 
 fn open_dialog(app: &mut App, dialog: ActiveDialog) {
@@ -1140,6 +1161,18 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                 Some("Undo Last Message")  => undo_message(app).await?,
                 Some("Help")               => open_dialog(app, ActiveDialog::Help),
                 Some("Open Folder")        => open_folder_browser(app),
+                Some("Enable Git Context")  => {
+                    if app.project_ctx.as_ref().map(|c| c.is_git).unwrap_or(false) {
+                        app.project_context_active = true;
+                        app.push_toast(crate::ui::components::toast::Toast::success("Git context enabled — branch, status and diff injected into prompts."));
+                    } else {
+                        app.push_toast(crate::ui::components::toast::Toast::warning("Not a git repository."));
+                    }
+                }
+                Some("Disable Git Context") => {
+                    app.project_context_active = false;
+                    app.push_toast(crate::ui::components::toast::Toast::info("Git context disabled."));
+                }
                 Some("Index Folder")       => open_dialog(app, ActiveDialog::IndexConfirm),
                 Some("Search Index")       => open_dialog(app, ActiveDialog::RagSearch),
                 Some("Clear Index")        => {
@@ -1320,7 +1353,7 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     // Build system prompt with full tool documentation
     let system = crate::tools::build_agent_system_prompt(
         &app.working_dir,
-        app.project_ctx.as_ref(),
+        if app.project_context_active { app.project_ctx.as_ref() } else { None },
         &app.current_agent,
         &app.custom_agents,
     );
@@ -1613,7 +1646,7 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
     // Re-build the full chat and send back to the model
     let system = crate::tools::build_agent_system_prompt(
         &app.working_dir,
-        app.project_ctx.as_ref(),
+        if app.project_context_active { app.project_ctx.as_ref() } else { None },
         &app.current_agent,
         &app.custom_agents,
     );
@@ -1811,7 +1844,7 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
     app.streaming_buf.clear();
 
     let system = crate::tools::build_agent_system_prompt(
-        &app.working_dir, app.project_ctx.as_ref(), &app.current_agent, &app.custom_agents,
+        &app.working_dir, if app.project_context_active { app.project_ctx.as_ref() } else { None }, &app.current_agent, &app.custom_agents,
     );
     let mut chat: Vec<ChatMessage> = vec![ChatMessage { role: "system".to_string(), content: system }];
     for msg in &app.messages {

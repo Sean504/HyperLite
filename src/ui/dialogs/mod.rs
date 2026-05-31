@@ -25,6 +25,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         ActiveDialog::AgentPicker    => agent_picker::render(frame, area, app),
         ActiveDialog::AgentEditor    => agent_picker::render_editor(frame, area, app),
         ActiveDialog::DraftPicker    => draft_picker::render(frame, area, app),
+        ActiveDialog::GitConfirm     => render_git_confirm(frame, area, app),
         ActiveDialog::IndexConfirm   => render_index_confirm(frame, area, app),
         ActiveDialog::RagSearch      => render_rag_search(frame, area, app),
         ActiveDialog::MemoryInput    => render_memory_input(frame, area, app),
@@ -111,6 +112,72 @@ fn render_rag_search(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("  Enter to search  ·  Esc to cancel", Style::default().fg(app.theme.text_dim)),
+        ])),
+        chunks[1],
+    );
+}
+
+fn render_git_confirm(frame: &mut Frame, area: Rect, app: &mut App) {
+    let folder = app.working_dir.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| app.working_dir.to_string_lossy().to_string());
+
+    let branch = app.project_ctx.as_ref()
+        .and_then(|c| c.git_branch.clone())
+        .unwrap_or_else(|| "main".to_string());
+
+    let dialog = centered_rect(58, 8, area);
+    frame.render_widget(Clear, dialog);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.primary))
+        .title(Line::from(vec![
+            Span::styled(" Git repository detected ", Style::default().fg(app.theme.primary)),
+        ]));
+    let inner = block.inner(dialog);
+    frame.render_widget(block, dialog);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("  Folder: ", Style::default().fg(app.theme.text_dim)),
+                Span::styled(folder, Style::default().fg(app.theme.text).add_modifier(Modifier::BOLD)),
+                Span::styled("  (", Style::default().fg(app.theme.text_dim)),
+                Span::styled(branch, Style::default().fg(app.theme.accent)),
+                Span::styled(")", Style::default().fg(app.theme.text_dim)),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "  Would you like to enable the Git Agent?",
+                    Style::default().fg(app.theme.text),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "  Injects branch, status and diff into every prompt.",
+                    Style::default().fg(app.theme.text_dim),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "  You can always toggle this in the Agent tab of the command palette.",
+                    Style::default().fg(app.theme.text_dim),
+                ),
+            ]),
+        ]),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Enter / Y  →  enable    ", Style::default().fg(app.theme.success)),
+            Span::styled("Esc / N  →  not now", Style::default().fg(app.theme.text_dim)),
         ])),
         chunks[1],
     );

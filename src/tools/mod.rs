@@ -22,6 +22,7 @@ pub mod files;
 pub mod shell;
 pub mod http;
 pub mod rag;
+pub mod git;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -145,6 +146,30 @@ pub static ALL_TOOLS: &[ToolDef] = &[
         name:        "http_fetch",
         description: "Fetch the content of a URL. Returns the text content of the page.",
         parameters:  r#"{"type":"object","properties":{"url":{"type":"string"},"extract_text":{"type":"boolean","default":true}},"required":["url"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "git_status",
+        description: "Get the current git status of the working directory — staged, unstaged, and untracked files.",
+        parameters:  r#"{"type":"object","properties":{}}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "git_log",
+        description: "Get recent git commit history. Optionally filter by file path or limit count.",
+        parameters:  r#"{"type":"object","properties":{"n":{"type":"integer","description":"Number of commits (default 20)"},"path":{"type":"string","description":"Limit to commits touching this file/dir"}}}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "git_diff",
+        description: "Get the current git diff. Pass a file path to diff a specific file, or leave empty for all changes.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"File to diff (optional)"},"staged":{"type":"boolean","description":"Show staged changes instead of unstaged"}}}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "git_blame",
+        description: "Show who last changed each line of a file (git blame).",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"File path to blame"}},"required":["path"]}"#,
         requires_permission: false,
     },
     ToolDef {
@@ -903,6 +928,10 @@ pub async fn execute(
         "tree"         => files::tree(&call.parameters, cwd),
         "shell"        => shell::execute(&call.parameters, cwd).await,
         "http_fetch"   => http::fetch(&call.parameters, client).await,
+        "git_status"   => git::status(cwd),
+        "git_log"      => git::log(&call.parameters, cwd),
+        "git_diff"     => git::diff(&call.parameters, cwd),
+        "git_blame"    => git::blame(&call.parameters, cwd),
         "index_dir"    => tokio::task::block_in_place(|| rag::index_dir(&call.parameters, cwd, db)),
         "search_index" => tokio::task::block_in_place(|| rag::search_index(&call.parameters, db)),
         "clear_index"  => tokio::task::block_in_place(|| rag::clear_index(&call.parameters, db)),

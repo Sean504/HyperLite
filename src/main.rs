@@ -161,7 +161,7 @@ async fn run_app() -> anyhow::Result<()> {
 
     // ── Project context ───────────────────────────────────────────────────────
     let project_ctx = std::env::current_dir().ok().map(|d| project::scan(&d));
-    let project_context_active = project_ctx.as_ref().map(|c| c.is_git).unwrap_or(false);
+    let project_context_active = false; // opt-in via Agent tab, not auto-enabled
 
     // ── Theme ─────────────────────────────────────────────────────────────────
     let theme = ui::theme::get(&config.theme);
