@@ -455,6 +455,12 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
 }
 
 async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Result<bool> {
+    // Quit is always global — works even with dialogs/permission prompts open
+    if let Some(Action::Quit) = app.keybinds.resolve(&key).cloned() {
+        let _ = crate::config::save(&app.config);
+        return Ok(true);
+    }
+
     // Dialog key handling
     if app.active_dialog != ActiveDialog::None {
         return handle_dialog_key(app, key).await;
