@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Sessions: fixed compact block (~¼ of typical terminal height, min 4)
     let session_h  = (inner.height / 4).max(4).min(12);
     // Bottom fixed sections
-    let folder_h   = 4_u16;
+    let folder_h   = 5_u16;
     let model_h    = 3_u16;
     let hardware_h = 5_u16;
     let bottom_h   = folder_h + model_h + hardware_h;
@@ -232,14 +232,23 @@ fn render_folder(frame: &mut Frame, area: Rect, app: &App) {
             .ok().flatten().is_some()
     };
 
-    let status_line = if has_index {
-        Line::from(vec![
-            Span::styled("◆ indexed", Style::default().fg(app.theme.success)),
-        ])
+    let index_line = if has_index {
+        Line::from(vec![Span::styled("◆ indexed", Style::default().fg(app.theme.success))])
     } else if app.project_context_active {
-        Line::from(vec![
-            Span::styled("◆ git context", Style::default().fg(app.theme.accent)),
-        ])
+        Line::from(vec![Span::styled("◆ git context", Style::default().fg(app.theme.accent))])
+    } else {
+        Line::default()
+    };
+
+    let mem_count = {
+        let conn = app.db.lock().unwrap();
+        crate::memory::count(&conn)
+    };
+    let memory_line = if mem_count > 0 {
+        Line::from(vec![Span::styled(
+            format!("◆ {} memor{}", mem_count, if mem_count == 1 { "y" } else { "ies" }),
+            Style::default().fg(app.theme.primary),
+        )])
     } else {
         Line::default()
     };
@@ -251,7 +260,8 @@ fn render_folder(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(app.theme.accent),
             ),
         ]),
-        status_line,
+        index_line,
+        memory_line,
     ];
     frame.render_widget(Paragraph::new(lines), inner);
 }

@@ -10,6 +10,7 @@ mod keybinds;
 mod models;
 mod project;
 mod providers;
+mod memory;
 mod rag;
 mod session;
 mod startup;

@@ -27,7 +27,48 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         ActiveDialog::DraftPicker    => draft_picker::render(frame, area, app),
         ActiveDialog::IndexConfirm   => render_index_confirm(frame, area, app),
         ActiveDialog::RagSearch      => render_rag_search(frame, area, app),
+        ActiveDialog::MemoryInput    => render_memory_input(frame, area, app),
     }
+}
+
+fn render_memory_input(frame: &mut Frame, area: Rect, app: &mut App) {
+    let dialog = centered_rect(52, 6, area);
+    frame.render_widget(Clear, dialog);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.theme.accent))
+        .title(Line::from(vec![
+            Span::styled(" Save to Memory ", Style::default().fg(app.theme.accent)),
+        ]));
+    let inner = block.inner(dialog);
+    frame.render_widget(block, dialog);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("  Type a fact for the AI to remember across all sessions.", Style::default().fg(app.theme.text_dim)),
+            ]),
+            Line::from(vec![
+                Span::styled(" > ", Style::default().fg(app.theme.primary)),
+                Span::styled(app.dialog_search_query.clone(), Style::default().fg(app.theme.text)),
+                Span::styled("█", Style::default().fg(app.theme.accent)),
+            ]),
+        ]),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Enter to save  ·  Esc to cancel", Style::default().fg(app.theme.text_dim)),
+        ])),
+        chunks[1],
+    );
 }
 
 fn render_rag_search(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -111,7 +152,7 @@ fn render_index_confirm(frame: &mut Frame, area: Rect, app: &mut App) {
             ]),
             Line::from(vec![
                 Span::styled(
-                    "  Scoped only to this folder — nothing else is touched.",
+                    "  First run downloads embedding model (~22 MB). Scoped to this folder.",
                     Style::default().fg(app.theme.text_dim),
                 ),
             ]),

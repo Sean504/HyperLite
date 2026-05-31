@@ -24,7 +24,11 @@ pub fn index_dir(params: &Value, cwd: &PathBuf, db: &crate::db::Db) -> Result<St
         .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.trim_start_matches('.').to_lowercase())).collect())
         .unwrap_or_default();
 
-    // Initialise embedder (downloads model if needed)
+    // Initialise embedder — downloads ~22 MB on first use.
+    // The IndexConfirm dialog already warned the user before this runs.
+    if crate::rag::embed_one_if_ready("").is_none() {
+        eprintln!("[HyperLite] First-time setup: downloading embedding model (~22 MB)…");
+    }
     crate::rag::embedder()?;
 
     let conn = db.lock().unwrap();

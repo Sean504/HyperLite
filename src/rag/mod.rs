@@ -22,24 +22,33 @@ fn model_cache_dir() -> PathBuf {
 }
 
 /// Initialise (or return cached) embedder. Downloads model on first call (~22 MB).
+/// Caller is responsible for notifying the user before calling this on first use.
 pub fn embedder() -> Result<&'static TextEmbedding> {
     if let Some(e) = EMBEDDER.get() { return Ok(e); }
 
     let cache = model_cache_dir();
     std::fs::create_dir_all(&cache)?;
 
+    let needs_download = !cache.join("all-MiniLM-L6-v2").exists()
+        && !cache.join("fast-all-MiniLM-L6-v2").exists();
+
+    if needs_download {
+        eprintln!("[HyperLite] Downloading embedding model (~22 MB) to {:?}…", cache);
+    }
+
     let model = TextEmbedding::try_new(
         InitOptions::new(EmbeddingModel::AllMiniLML6V2)
             .with_cache_dir(cache)
-            .with_show_download_progress(false),
+            .with_show_download_progress(true),
     )?;
 
-    // OnceLock::set returns Err if already set (race) — just return whatever is there
     let _ = EMBEDDER.set(model);
     Ok(EMBEDDER.get().unwrap())
 }
 
 /// Embed a single string. Returns a normalised f32 vector.
+/// Initialises the embedder (downloading model if needed) — only call from
+/// explicit indexing operations, not hot paths like memory retrieval.
 pub fn embed_one(text: &str) -> Result<Vec<f32>> {
     let emb = embedder()?;
     let mut vecs = emb.embed(vec![text], None)?;
@@ -50,4 +59,11 @@ pub fn embed_one(text: &str) -> Result<Vec<f32>> {
 pub fn embed_batch(texts: &[&str]) -> Result<Vec<Vec<f32>>> {
     let emb = embedder()?;
     Ok(emb.embed(texts.to_vec(), None)?)
+}
+
+/// Embed only if the embedder is already initialised — never triggers a download.
+/// Returns None if the model isn't loaded yet.
+pub fn embed_one_if_ready(text: &str) -> Option<Vec<f32>> {
+    let emb = EMBEDDER.get()?;
+    emb.embed(vec![text], None).ok()?.into_iter().next()
 }

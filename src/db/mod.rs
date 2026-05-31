@@ -30,6 +30,7 @@ fn run_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch(include_str!("../../migrations/001_initial.sql"))?;
     conn.execute_batch(include_str!("../../migrations/002_agents_drafts.sql"))?;
     crate::rag::store::init_rag_tables(conn)?;
+    crate::memory::init_memory_table(conn)?;
     Ok(())
 }
 

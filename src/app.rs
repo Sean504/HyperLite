@@ -32,6 +32,7 @@ pub enum ActiveDialog {
     DraftPicker,
     IndexConfirm,  // shown after opening a folder — ask if user wants to index it
     RagSearch,     // text input for searching an index manually
+    MemoryInput,   // text input for saving a new memory fact
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -704,6 +705,31 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
         return Ok(false);
     }
 
+    // MemoryInput — type a fact to save to persistent memory
+    if app.active_dialog == ActiveDialog::MemoryInput {
+        match key.code {
+            KeyCode::Esc => close_dialog(app),
+            KeyCode::Enter => {
+                let content = app.dialog_search_query.trim().to_string();
+                close_dialog(app);
+                if !content.is_empty() {
+                    let sid    = app.session_id.clone();
+                    let result = { let conn = app.db.lock().unwrap(); crate::memory::save(&conn, &content, "general", Some(&sid)) };
+                    match result {
+                        Ok(_)  => app.push_toast(crate::ui::components::toast::Toast::success("Memory saved.")),
+                        Err(e) => app.push_toast(crate::ui::components::toast::Toast::error(format!("Failed to save memory: {}", e))),
+                    }
+                }
+            }
+            KeyCode::Backspace => { app.dialog_search_query.pop(); }
+            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
+                app.dialog_search_query.push(c);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // IndexConfirm — ask user whether to index the just-opened folder
     if app.active_dialog == ActiveDialog::IndexConfirm {
         match key.code {
@@ -712,7 +738,7 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
                 let dir = app.working_dir.clone();
                 let db  = app.db.clone();
                 let tx  = app.event_tx.clone();
-                app.push_toast(crate::ui::components::toast::Toast::info("Indexing folder…"));
+                app.push_toast(crate::ui::components::toast::Toast::info("Indexing folder… (downloads ~22 MB embedding model on first use)"));
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
                         crate::tools::rag::index_dir(
@@ -1151,6 +1177,29 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                         }
                     }
                 }
+                Some("Save Memory")        => open_dialog(app, ActiveDialog::MemoryInput),
+                Some("View Memory")        => {
+                    let result = { let conn = app.db.lock().unwrap(); crate::memory::list_all(&conn) };
+                    match result {
+                        Ok(mems) if mems.is_empty() => {
+                            app.push_toast(crate::ui::components::toast::Toast::info("No memories saved yet. Use 'Save Memory' to add one."));
+                        }
+                        Ok(mems) => {
+                            let lines: Vec<String> = mems.iter()
+                                .map(|m| format!("[{}] {}", m.category, m.content))
+                                .collect();
+                            app.push_toast(crate::ui::components::toast::Toast::info(lines.join("\n")));
+                        }
+                        Err(e) => { app.push_toast(crate::ui::components::toast::Toast::error(format!("Error: {}", e))); }
+                    }
+                }
+                Some("Clear Memory")       => {
+                    let result = { let conn = app.db.lock().unwrap(); crate::memory::clear_all(&conn) };
+                    match result {
+                        Ok(n)  => { app.push_toast(crate::ui::components::toast::Toast::success(format!("Cleared {} memories.", n))); }
+                        Err(e) => { app.push_toast(crate::ui::components::toast::Toast::error(format!("Error: {}", e))); }
+                    }
+                }
                 Some("Quit")               => return Ok(()),
                 _ => {}
             }
@@ -1281,9 +1330,17 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
         ChatMessage { role: "system".to_string(), content: system },
     ];
 
-    // Inject RAG context scoped strictly to the current working directory's index
+    // Inject persistent memories into system prompt
     if let Some(user_query) = app.messages.last().map(|m| m.text_content()) {
         if !user_query.is_empty() {
+            // Persistent memory (cross-session facts)
+            if let Some(mem_ctx) = crate::memory::build_context(&app.db, &user_query) {
+                chat.push(ChatMessage {
+                    role:    "system".to_string(),
+                    content: mem_ctx,
+                });
+            }
+            // RAG context scoped to current working directory
             let working_dir = app.working_dir.to_string_lossy().to_string();
             if let Some(rag_ctx) = crate::tools::rag::retrieve_context(&user_query, &app.db, &working_dir, 5) {
                 chat.push(ChatMessage {
