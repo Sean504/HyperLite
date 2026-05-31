@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use crate::app::App;
 use super::centered_rect;
 
-pub const TABS: &[&str] = &["Sessions", "Display", "Actions", "Options"];
+pub const TABS: &[&str] = &["Sessions", "Agent", "Display", "Options"];
 
 #[derive(Clone)]
 pub struct Command {
@@ -19,7 +19,7 @@ pub struct Command {
 
 pub fn commands_for_tab(tab: usize) -> Vec<Command> {
     match tab {
-        // ── Sessions / Model / Folder ─────────────────────────────────────────
+        // ── Sessions ──────────────────────────────────────────────────────────
         0 => vec![
             Command { label: "New Session",      desc: "Start a blank session",          shortcut: "Ctrl+N" },
             Command { label: "Switch Session",   desc: "Browse session history",         shortcut: "Ctrl+S" },
@@ -27,38 +27,38 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
             Command { label: "Delete Session",   desc: "Remove current session",         shortcut: "Ctrl+W" },
             Command { label: "Rename Session",   desc: "Rename current session",         shortcut: "Ctrl+R" },
             Command { label: "Compact Session",  desc: "Summarize and compress history", shortcut: "" },
-            Command { label: "Switch Model",     desc: "Choose a local model",           shortcut: "Ctrl+M" },
-            Command { label: "Cycle Model Next", desc: "Next model in list",             shortcut: "Alt+M" },
-            Command { label: "Switch Agent",     desc: "Change agent mode (General/Build/Plan/Custom)", shortcut: "Ctrl+A" },
+            Command { label: "Open Folder",      desc: "Open a repo or directory",       shortcut: "Ctrl+O" },
             Command { label: "Stash Draft",      desc: "Save input to draft stash",      shortcut: "Ctrl+D" },
             Command { label: "Pop Draft",        desc: "Restore a stashed draft",        shortcut: "Ctrl+Shift+D" },
-            Command { label: "Open Folder",      desc: "Open a repo or directory",       shortcut: "Ctrl+O" },
         ],
-        // ── Display / Settings ────────────────────────────────────────────────
+        // ── Agent ─────────────────────────────────────────────────────────────
         1 => vec![
+            Command { label: "Switch Agent",     desc: "Change agent mode (General/Build/Plan/Custom)", shortcut: "Ctrl+A" },
+            Command { label: "Switch Model",     desc: "Choose a local model",                          shortcut: "Ctrl+M" },
+            Command { label: "Cycle Model Next", desc: "Next model in list",                            shortcut: "Alt+M" },
+            Command { label: "Index Folder",     desc: "Index current folder for AI semantic search",   shortcut: "" },
+            Command { label: "Search Index",     desc: "Search the current folder index",               shortcut: "" },
+            Command { label: "Clear Index",      desc: "Remove the index for the current folder",       shortcut: "" },
+            Command { label: "List Indexes",     desc: "Show all indexed folders with chunk counts",    shortcut: "" },
+            Command { label: "Save Memory",      desc: "Save a fact the AI remembers across sessions",  shortcut: "" },
+            Command { label: "View Memory",      desc: "Show all stored memories",                      shortcut: "" },
+            Command { label: "Clear Memory",     desc: "Delete all stored memories",                    shortcut: "" },
+        ],
+        // ── Display ───────────────────────────────────────────────────────────
+        2 => vec![
             Command { label: "Pick Theme",           desc: "Switch color theme",             shortcut: "" },
             Command { label: "Toggle Sidebar",       desc: "Show/hide sidebar panel",        shortcut: "Ctrl+\\" },
             Command { label: "Toggle Thinking",      desc: "Show/hide reasoning blocks",     shortcut: "Ctrl+T" },
             Command { label: "Toggle Tool Details",  desc: "Expand/collapse tool output",    shortcut: "Ctrl+H" },
             Command { label: "Toggle Conceal",       desc: "Hide/show code blocks",          shortcut: "Ctrl+/" },
         ],
-        // ── Actions ───────────────────────────────────────────────────────────
-        2 => vec![
-            Command { label: "Open in Editor",       desc: "Edit input in $EDITOR",                               shortcut: "Ctrl+E" },
-            Command { label: "Copy Last Response",   desc: "Copy assistant message",                              shortcut: "Ctrl+C" },
-            Command { label: "Undo Last Message",    desc: "Remove last exchange",                                shortcut: "Ctrl+Z" },
-            Command { label: "Index Folder",         desc: "Index current folder for AI semantic search (RAG)",         shortcut: "" },
-            Command { label: "Search Index",         desc: "Search the current folder index by keyword/concept",        shortcut: "" },
-            Command { label: "Clear Index",          desc: "Remove the index for the current working folder",           shortcut: "" },
-            Command { label: "List Indexes",         desc: "Show all indexed folders with file and chunk counts",       shortcut: "" },
-            Command { label: "Save Memory",          desc: "Save a fact for the AI to remember across all sessions",    shortcut: "" },
-            Command { label: "View Memory",          desc: "Show all stored memories",                                  shortcut: "" },
-            Command { label: "Clear Memory",         desc: "Delete all stored memories",                                shortcut: "" },
-        ],
         // ── Options ───────────────────────────────────────────────────────────
         3 => vec![
-            Command { label: "Help",  desc: "Show keybinding reference", shortcut: "?" },
-            Command { label: "Quit",  desc: "Exit HyperLite",            shortcut: "Ctrl+X" },
+            Command { label: "Open in Editor",   desc: "Edit input in $EDITOR",       shortcut: "Ctrl+E" },
+            Command { label: "Copy Last Response",desc: "Copy assistant message",     shortcut: "Ctrl+C" },
+            Command { label: "Undo Last Message", desc: "Remove last exchange",       shortcut: "Ctrl+Z" },
+            Command { label: "Help",              desc: "Show keybinding reference",  shortcut: "?" },
+            Command { label: "Quit",              desc: "Exit HyperLite",             shortcut: "Ctrl+X" },
         ],
         _ => vec![],
     }
