@@ -29,17 +29,10 @@ pub fn embedder() -> Result<&'static TextEmbedding> {
     let cache = model_cache_dir();
     std::fs::create_dir_all(&cache)?;
 
-    let needs_download = !cache.join("all-MiniLM-L6-v2").exists()
-        && !cache.join("fast-all-MiniLM-L6-v2").exists();
-
-    if needs_download {
-        eprintln!("[HyperLite] Downloading embedding model (~22 MB) to {:?}…", cache);
-    }
-
     let model = TextEmbedding::try_new(
         InitOptions::new(EmbeddingModel::AllMiniLML6V2)
             .with_cache_dir(cache)
-            .with_show_download_progress(true),
+            .with_show_download_progress(false),
     )?;
 
     let _ = EMBEDDER.set(model);

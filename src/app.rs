@@ -1482,27 +1482,23 @@ async fn submit_message(app: &mut App) -> anyhow::Result<()> {
     }
 
     // ── HTTP path ────────────────────────────────────────────────────────────
-    let base_url_opt = app.provider_registry
-        .find_for_model(&model_id)
-        .map(|p| p.base_url().to_string());
+    let (base_url, backend_kind) = app.provider_registry
+        .backend_for_model(&model_id, &app.available_models);
 
-    let base_url = match base_url_opt {
-        Some(u) => u,
-        None => {
-            app.streaming = false;
-            app.push_toast(crate::ui::components::toast::Toast::error("No backend available"));
-            return Ok(());
-        }
-    };
+    if base_url.is_empty() {
+        app.streaming = false;
+        app.push_toast(crate::ui::components::toast::Toast::error("No backend available"));
+        return Ok(());
+    }
 
     // Fix 3+4: tune temperature and stop sequences based on user intent
     let params = action_params(&text);
 
     tokio::spawn(async move {
-        match crate::providers::openai_compat::stream_chat(
+        match crate::providers::stream_for_backend(
             &http_client,
             &base_url,
-            crate::providers::BackendKind::OpenAICompat,
+            backend_kind,
             &chat,
             &model_id,
             &params,
@@ -1745,10 +1741,8 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let base_url = app.provider_registry
-        .find_for_model(&model_id)
-        .map(|p| p.base_url().to_string())
-        .unwrap_or_default();
+    let (base_url, backend_kind) = app.provider_registry
+        .backend_for_model(&model_id, &app.available_models);
 
     if base_url.is_empty() {
         app.streaming = false;
@@ -1757,10 +1751,10 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
     }
 
     tokio::spawn(async move {
-        match crate::providers::openai_compat::stream_chat(
+        match crate::providers::stream_for_backend(
             &http_client,
             &base_url,
-            crate::providers::BackendKind::OpenAICompat,
+            backend_kind,
             &chat,
             &model_id,
             &params,
@@ -1894,14 +1888,14 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let base_url = app.provider_registry.find_for_model(&model_id)
-        .map(|p| p.base_url().to_string()).unwrap_or_default();
+    let (base_url, backend_kind) = app.provider_registry
+        .backend_for_model(&model_id, &app.available_models);
 
     if base_url.is_empty() { app.streaming = false; return Ok(()); }
 
     tokio::spawn(async move {
-        match crate::providers::openai_compat::stream_chat(
-            &http_client, &base_url, crate::providers::BackendKind::OpenAICompat,
+        match crate::providers::stream_for_backend(
+            &http_client, &base_url, backend_kind,
             &chat, &model_id, &params,
         ).await {
             Ok(mut rx) => {
@@ -2301,16 +2295,12 @@ async fn compact_session(app: &mut App) -> anyhow::Result<()> {
         history
     );
 
-    let base_url_opt = app.provider_registry
-        .find_for_model(&app.current_model)
-        .map(|p| p.base_url().to_string());
-    let base_url = match base_url_opt {
-        Some(u) => u,
-        None => {
-            app.push_toast(crate::ui::components::toast::Toast::error("No backend for compaction"));
-            return Ok(());
-        }
-    };
+    let (base_url, backend_kind) = app.provider_registry
+        .backend_for_model(&app.current_model, &app.available_models);
+    if base_url.is_empty() {
+        app.push_toast(crate::ui::components::toast::Toast::error("No backend for compaction"));
+        return Ok(());
+    }
 
     let model_id    = app.current_model.clone();
     let session_id  = app.session_id.clone();
@@ -2326,9 +2316,8 @@ async fn compact_session(app: &mut App) -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         let params = crate::providers::GenerationParams::default();
-        match crate::providers::openai_compat::stream_chat(
-            &http_client, &base_url,
-            crate::providers::BackendKind::OpenAICompat,
+        match crate::providers::stream_for_backend(
+            &http_client, &base_url, backend_kind,
             &chat, &model_id, &params,
         ).await {
             Ok(mut rx) => {

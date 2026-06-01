@@ -490,6 +490,7 @@ impl ProviderRegistry {
     }
 
     /// Find a provider that can serve the given model ID.
+    /// Pass the available models list so we can match by backend kind.
     pub fn find_for_model(&self, model_id: &str) -> Option<&dyn LocalProvider> {
         // Try exact provider ID prefix first: "ollama/llama3" -> ollama
         if let Some(slash) = model_id.find('/') {
@@ -501,8 +502,53 @@ impl ProviderRegistry {
         // Fall back to first provider registered
         self.providers.first().map(|p| p.as_ref())
     }
+
+    /// Find the provider for a model by looking up its backend kind from the
+    /// known model list. This correctly routes Ollama models, DirectGguf, etc.
+    pub fn find_for_model_with_list<'a>(
+        &'a self,
+        model_id: &str,
+        known_models: &[LocalModel],
+    ) -> Option<&'a dyn LocalProvider> {
+        if let Some(model) = known_models.iter().find(|m| m.id == model_id) {
+            if let Some(p) = self.providers.iter().find(|p| p.kind() == model.backend) {
+                return Some(p.as_ref());
+            }
+        }
+        self.find_for_model(model_id)
+    }
+
+    /// Return (base_url, backend_kind) for a model.
+    pub fn backend_for_model(&self, model_id: &str, known_models: &[LocalModel]) -> (String, BackendKind) {
+        if let Some(p) = self.find_for_model_with_list(model_id, known_models) {
+            (p.base_url().to_string(), p.kind())
+        } else {
+            (String::new(), BackendKind::OpenAICompat)
+        }
+    }
 }
 
 impl Default for ProviderRegistry {
     fn default() -> Self { Self::new() }
+}
+
+/// Stream chat through the correct backend for a model.
+/// Handles Ollama's native /api/chat, DirectGguf's local server,
+/// and OpenAI-compat for everything else.
+pub async fn stream_for_backend(
+    client:    &reqwest::Client,
+    base_url:  &str,
+    kind:      BackendKind,
+    messages:  &[ChatMessage],
+    model_id:  &str,
+    params:    &GenerationParams,
+) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>> {
+    match kind {
+        BackendKind::Ollama => {
+            crate::providers::ollama::stream_chat_ollama(client, base_url, messages, model_id, params).await
+        }
+        _ => {
+            openai_compat::stream_chat(client, base_url, kind, messages, model_id, params).await
+        }
+    }
 }

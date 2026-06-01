@@ -24,11 +24,7 @@ pub fn index_dir(params: &Value, cwd: &PathBuf, db: &crate::db::Db) -> Result<St
         .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.trim_start_matches('.').to_lowercase())).collect())
         .unwrap_or_default();
 
-    // Initialise embedder — downloads ~22 MB on first use.
-    // The IndexConfirm dialog already warned the user before this runs.
-    if crate::rag::embed_one_if_ready("").is_none() {
-        eprintln!("[HyperLite] First-time setup: downloading embedding model (~22 MB)…");
-    }
+    // Initialise embedder — downloads on first use, user was warned by IndexConfirm dialog.
     crate::rag::embedder()?;
 
     let conn = db.lock().unwrap();
@@ -205,7 +201,8 @@ pub fn retrieve_context(query: &str, db: &crate::db::Db, working_dir: &str, top_
     let conn = db.lock().ok()?;
     // Only use the index that was created for THIS working directory
     let index = store::get_index_for_dir(&conn, working_dir).ok()??;
-    let query_emb = embed_one(query).ok()?;
+    // Never trigger embedder init from auto-injection — only use if already warm
+    let query_emb = crate::rag::embed_one_if_ready(query)?;
     let results = store::search(&conn, &index.id, &query_emb, top_k).ok()?;
     if results.is_empty() { return None; }
 

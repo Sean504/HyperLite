@@ -220,3 +220,15 @@ impl LocalProvider for OllamaProvider {
         anyhow::bail!("Ollama manages its own models. Use 'ollama pull <model>' to add models.")
     }
 }
+
+/// Standalone streaming function usable outside the provider trait.
+pub async fn stream_chat_ollama(
+    client:   &Client,
+    base_url: &str,
+    messages: &[super::ChatMessage],
+    model:    &str,
+    params:   &super::GenerationParams,
+) -> anyhow::Result<tokio::sync::mpsc::Receiver<super::StreamEvent>> {
+    let p = OllamaProvider::new(client.clone(), base_url);
+    p.chat_stream(messages, model, params).await
+}
