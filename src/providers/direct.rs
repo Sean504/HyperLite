@@ -181,18 +181,18 @@ impl DirectGgufProvider {
                 .spawn()?);
         }
 
-        // GGUF/GGML: check bundled llamafile first, then PATH
-        let bundled = crate::startup::runtime_path();
-        let runtime_bin = if bundled.exists() {
-            bundled
-        } else {
-            which::which("llama-server")
-                .or_else(|_| which::which("llama-cpp-server"))
-                .or_else(|_| which::which("llamafile"))
-                .map_err(|_| anyhow::anyhow!(
-                    "No inference runtime found. Restart HyperLite to download llamafile automatically."
-                ))?
-        };
+        // GGUF/GGML: prefer system llama-server (typically CUDA-enabled) over bundled llamafile.
+        // System builds compiled with -DGGML_CUDA=ON give full GPU offload; bundled llamafile
+        // may lack CUDA support in WSL environments.
+        let bundled_llamafile = crate::startup::runtime_path();
+        let bundled_llama_server = crate::startup::find_bundled_llama_server();
+        let runtime_bin = which::which("llama-server")
+            .or_else(|_| which::which("llama-cpp-server"))
+            .unwrap_or_else(|_| {
+                if let Some(p) = bundled_llama_server.clone() { p }
+                else if bundled_llamafile.exists() { bundled_llamafile }
+                else { which::which("llamafile").unwrap_or_else(|_| PathBuf::from("llamafile")) }
+            });
 
         // llamafile needs --server to run as an HTTP server; llama-server is already a server
         let is_llamafile = runtime_bin.file_name()
@@ -212,18 +212,32 @@ impl DirectGgufProvider {
         };
         #[cfg(not(unix))]
         let mut cmd = tokio::process::Command::new(&runtime_bin);
-        // Derive runtime flags from detected hardware
-        let gpu_layers = if self.hardware.cpu_only { 0 } else { 99 };
-        let threads    = self.hardware.cpu.physical_cores.max(1).to_string();
+        let p = self.hardware.optimal_inference_params();
+
+        // Set LD_LIBRARY_PATH to the runtime's directory so shared libs (.so files)
+        // from extracted llama.cpp archives are found at startup.
+        if let Some(dir) = runtime_bin.parent() {
+            let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+            let lib_path = if existing.is_empty() {
+                dir.to_string_lossy().to_string()
+            } else {
+                format!("{}:{}", dir.to_string_lossy(), existing)
+            };
+            cmd.env("LD_LIBRARY_PATH", lib_path);
+        }
 
         cmd.arg("--model").arg(path)
            .arg("--port").arg(port.to_string())
            .arg("--host").arg("127.0.0.1")
-           .arg("--ctx-size").arg("4096")
-           .arg("--threads").arg(&threads)
-           .arg("--n-gpu-layers").arg(gpu_layers.to_string())
+           .arg("--ctx-size").arg(p.ctx_size.to_string())
+           .arg("--batch-size").arg(p.batch_size.to_string())
+           .arg("--threads").arg(p.threads.to_string())
+           .arg("--n-gpu-layers").arg(p.n_gpu_layers.to_string())
            .stdout(std::process::Stdio::null())
            .stderr(std::process::Stdio::piped());
+        if p.flash_attn {
+            cmd.arg("--flash-attn");
+        }
         if is_llamafile {
             cmd.arg("--server").arg("--nobrowser");
         }
@@ -288,10 +302,38 @@ impl LocalProvider for DirectGgufProvider {
         model:    &str,
         params:   &GenerationParams,
     ) -> Result<mpsc::Receiver<StreamEvent>> {
-        // model ID is the file path for direct provider
         let path = PathBuf::from(model);
         if !path.exists() {
             anyhow::bail!("Model file not found: {}", path.display());
+        }
+
+        // If Ollama is running, route through it — it handles CUDA automatically.
+        // Derive the Ollama model name from the GGUF filename (same as registration).
+        if which::which("ollama").is_ok() {
+            let ollama_base = "http://127.0.0.1:11434";
+            let health_ok = self.client
+                .get(format!("{}/api/tags", ollama_base))
+                .timeout(std::time::Duration::from_millis(500))
+                .send().await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+
+            if health_ok {
+                let model_name = path.file_stem()
+                    .map(|s| s.to_string_lossy()
+                        .replace(['.', ' '], "-")
+                        .to_lowercase())
+                    .unwrap_or_default();
+
+                return openai_compat::stream_chat(
+                    &self.client,
+                    &format!("{}/v1", ollama_base),
+                    BackendKind::Ollama,
+                    messages,
+                    &model_name,
+                    params,
+                ).await;
+            }
         }
 
         let port = self.active_port;

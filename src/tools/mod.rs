@@ -926,7 +926,10 @@ pub async fn execute(
         "append_file"  => files::append_file(&call.parameters, cwd),
         "file_info"    => files::file_info(&call.parameters, cwd),
         "tree"         => files::tree(&call.parameters, cwd),
-        "shell"        => shell::execute(&call.parameters, cwd).await,
+        "shell"        => {
+            // sandboxed routing happens at call site via execute_tool
+            shell::execute(&call.parameters, cwd).await
+        }
         "http_fetch"   => http::fetch(&call.parameters, client).await,
         "git_status"   => git::status(cwd),
         "git_log"      => git::log(&call.parameters, cwd),

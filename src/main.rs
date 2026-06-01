@@ -228,6 +228,7 @@ async fn run_app() -> anyhow::Result<()> {
 
         pending_permission: None,
         pending_diff:       None,
+        sandbox_enabled:    false,
         toast:              None,
 
         http_client,

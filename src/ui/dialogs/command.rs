@@ -38,6 +38,8 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
             Command { label: "Cycle Model Next",      desc: "Next model in list",                            shortcut: "Alt+M" },
             Command { label: "Enable Git Context",    desc: "Inject git branch/status/diff into AI context", shortcut: "" },
             Command { label: "Disable Git Context",   desc: "Stop injecting git context into AI prompts",    shortcut: "" },
+            Command { label: "Enable Sandbox",        desc: "Run shell commands inside bwrap isolation — filesystem changes don't escape", shortcut: "" },
+            Command { label: "Disable Sandbox",       desc: "Run shell commands directly in your environment", shortcut: "" },
             Command { label: "Index Folder",     desc: "Index current folder for AI semantic search",   shortcut: "" },
             Command { label: "Search Index",     desc: "Search the current folder index",               shortcut: "" },
             Command { label: "Clear Index",      desc: "Remove the index for the current folder",       shortcut: "" },

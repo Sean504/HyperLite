@@ -50,6 +50,9 @@ pub struct Theme {
     pub diff_del_fg:    Color,
     pub diff_ln_fg:     Color,
 
+    // Sandbox indicator
+    pub yellow: Color,
+
     // Agent colors — assigned round-robin to sessions
     pub agents: [Color; 8],
 }
@@ -94,6 +97,8 @@ pub static CYBERPUNK: Theme = Theme {
     diff_del_fg:  rgb(255, 85,  85),
     diff_ln_fg:   rgb(90,  90,  138),
 
+    yellow: rgb(241, 250, 140),
+
     agents: [
         rgb(189, 147, 249), // purple
         rgb(0,   245, 212), // teal
@@ -131,6 +136,8 @@ pub static DRACULA: Theme = Theme {
     diff_add_fg:  rgb(80,  250, 123),
     diff_del_fg:  rgb(255, 85,  85),
     diff_ln_fg:   rgb(98,  114, 164),
+    yellow: rgb(241, 250, 140),
+
     agents: [
         rgb(189, 147, 249),
         rgb(139, 233, 253),
@@ -168,6 +175,8 @@ pub static TOKYONIGHT: Theme = Theme {
     diff_add_fg:  rgb(158, 206, 106),
     diff_del_fg:  rgb(247, 118, 142),
     diff_ln_fg:   rgb(86,  95,  137),
+    yellow: rgb(224, 175, 104),
+
     agents: [
         rgb(122, 162, 247),
         rgb(125, 207, 255),
@@ -205,6 +214,8 @@ pub static CATPPUCCIN: Theme = Theme {
     diff_add_fg:  rgb(166, 227, 161),
     diff_del_fg:  rgb(243, 139, 168),
     diff_ln_fg:   rgb(108, 112, 134),
+    yellow: rgb(249, 226, 175),
+
     agents: [
         rgb(203, 166, 247),
         rgb(137, 220, 235),
@@ -242,6 +253,8 @@ pub static NORD: Theme = Theme {
     diff_add_fg:  rgb(163, 190, 140),
     diff_del_fg:  rgb(191, 97,  106),
     diff_ln_fg:   rgb(129, 161, 193),
+    yellow: rgb(235, 203, 139),
+
     agents: [
         rgb(136, 192, 208),
         rgb(143, 188, 187),
@@ -279,6 +292,8 @@ pub static GRUVBOX: Theme = Theme {
     diff_add_fg:  rgb(184, 187, 38),
     diff_del_fg:  rgb(204, 36,  29),
     diff_ln_fg:   rgb(146, 131, 116),
+    yellow: rgb(215, 153, 33),
+
     agents: [
         rgb(131, 165, 152),
         rgb(142, 192, 124),
@@ -316,6 +331,8 @@ pub static MONOKAI: Theme = Theme {
     diff_add_fg:  rgb(166, 226, 46),
     diff_del_fg:  rgb(249, 38,  114),
     diff_ln_fg:   rgb(117, 113, 94),
+    yellow: rgb(230, 219, 116),
+
     agents: [
         rgb(174, 129, 255),
         rgb(102, 217, 239),
@@ -353,6 +370,8 @@ pub static ONE_DARK: Theme = Theme {
     diff_add_fg:  rgb(152, 195, 121),
     diff_del_fg:  rgb(224, 108, 117),
     diff_ln_fg:   rgb(92,  99,  112),
+    yellow: rgb(229, 192, 123),
+
     agents: [
         rgb(198, 120, 221),
         rgb(86,  182, 194),
@@ -390,6 +409,8 @@ pub static SYNTHWAVE84: Theme = Theme {
     diff_add_fg:  rgb(114, 241, 168),
     diff_del_fg:  rgb(255, 70,  100),
     diff_ln_fg:   rgb(140, 100, 180),
+    yellow: rgb(255, 210, 100),
+
     agents: [
         rgb(255, 110, 253),
         rgb(54,  255, 253),
@@ -427,6 +448,8 @@ pub static MATRIX: Theme = Theme {
     diff_add_fg:  rgb(0,   255, 65),
     diff_del_fg:  rgb(255, 50,  50),
     diff_ln_fg:   rgb(0,   140, 35),
+    yellow: rgb(200, 200, 0),
+
     agents: [
         rgb(0,   255, 65),
         rgb(150, 255, 150),
@@ -464,6 +487,8 @@ pub static ROSEPINE: Theme = Theme {
     diff_add_fg:  rgb(156, 207, 216),
     diff_del_fg:  rgb(235, 111, 146),
     diff_ln_fg:   rgb(110, 106, 134),
+    yellow: rgb(246, 193, 119),
+
     agents: [
         rgb(196, 167, 231),
         rgb(235, 188, 186),
@@ -501,6 +526,8 @@ pub static EVERFOREST: Theme = Theme {
     diff_add_fg:  rgb(167, 192, 128),
     diff_del_fg:  rgb(230, 126, 128),
     diff_ln_fg:   rgb(127, 143, 136),
+    yellow: rgb(219, 188, 127),
+
     agents: [
         rgb(131, 192, 146),
         rgb(125, 196, 228),
@@ -538,6 +565,8 @@ pub static SOLARIZED: Theme = Theme {
     diff_add_fg:  rgb(133, 153, 0),
     diff_del_fg:  rgb(220, 50,  47),
     diff_ln_fg:   rgb(88,  110, 117),
+    yellow: rgb(181, 137, 0),
+
     agents: [
         rgb(108, 113, 196),
         rgb(42,  161, 152),
@@ -575,6 +604,8 @@ pub static KANAGAWA: Theme = Theme {
     diff_add_fg:  rgb(106, 153, 85),
     diff_del_fg:  rgb(195, 64,  67),
     diff_ln_fg:   rgb(113, 112, 96),
+    yellow: rgb(194, 168, 90),
+
     agents: [
         rgb(127, 180, 202),
         rgb(118, 148, 166),
@@ -612,6 +643,8 @@ pub static VESPER: Theme = Theme {
     diff_add_fg:  rgb(130, 200, 100),
     diff_del_fg:  rgb(210, 90,  90),
     diff_ln_fg:   rgb(90,  93,  91),
+    yellow: rgb(210, 170, 80),
+
     agents: [
         rgb(255, 188, 100),
         rgb(100, 200, 160),
@@ -649,6 +682,8 @@ pub static AURA: Theme = Theme {
     diff_add_fg:  rgb(97,  230, 159),
     diff_del_fg:  rgb(255, 100, 130),
     diff_ln_fg:   rgb(110, 100, 150),
+    yellow: rgb(255, 200, 100),
+
     agents: [
         rgb(162, 140, 255),
         rgb(96,  220, 220),
@@ -686,6 +721,8 @@ pub static PALENIGHT: Theme = Theme {
     diff_add_fg:  rgb(195, 232, 141),
     diff_del_fg:  rgb(240, 113, 120),
     diff_ln_fg:   rgb(84,  90,  120),
+    yellow: rgb(255, 203, 107),
+
     agents: [
         rgb(199, 146, 234),
         rgb(130, 170, 255),
@@ -723,6 +760,8 @@ pub static NIGHTOWL: Theme = Theme {
     diff_add_fg:  rgb(173, 219, 103),
     diff_del_fg:  rgb(255, 88,  116),
     diff_ln_fg:   rgb(100, 124, 158),
+    yellow: rgb(255, 203, 107),
+
     agents: [
         rgb(130, 170, 255),
         rgb(127, 219, 202),
@@ -761,6 +800,8 @@ pub static KAWAII: Theme = Theme {
     diff_add_fg:  rgb(40,  140, 80),
     diff_del_fg:  rgb(200, 40,  80),
     diff_ln_fg:   rgb(180, 100, 160),
+    yellow: rgb(255, 200, 80),
+
     agents: [
         rgb(255, 100, 180),
         rgb(140, 80,  220),
@@ -799,6 +840,8 @@ pub static GOTH: Theme = Theme {
     diff_add_fg:  rgb(80,  160, 80),
     diff_del_fg:  rgb(220, 30,  60),
     diff_ln_fg:   rgb(130, 90,  130),
+    yellow: rgb(180, 120, 40),
+
     agents: [
         rgb(180, 20,  40),
         rgb(200, 60,  80),
@@ -837,6 +880,8 @@ pub static SEPIA: Theme = Theme {
     diff_add_fg:  rgb(130, 170, 90),
     diff_del_fg:  rgb(190, 70,  50),
     diff_ln_fg:   rgb(150, 120, 80),
+    yellow: rgb(210, 155, 60),
+
     agents: [
         rgb(200, 150, 80),
         rgb(220, 170, 90),

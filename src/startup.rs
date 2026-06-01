@@ -85,31 +85,101 @@ pub fn has_local_models() -> bool {
 
 // ── Inference runtime ─────────────────────────────────────────────────────────
 
-/// Path where HyperLite stores the bundled llamafile runtime.
+/// Path where HyperLite stores the downloaded llamafile fallback runtime.
 pub fn runtime_path() -> PathBuf {
     let filename = if cfg!(windows) { "llamafile.exe" } else { "llamafile" };
     real_home_dir().join(".hyperlite").join(filename)
 }
 
-/// Returns true if a usable inference runtime is available.
+/// Returns true if any usable inference runtime is reachable.
 pub fn has_runtime() -> bool {
-    if runtime_path().exists() { return true; }
-    which::which("llama-server").is_ok()
+    runtime_path().exists()
+        || find_bundled_llama_server().is_some()
+        || which::which("ollama").is_ok()
+        || which::which("llama-server").is_ok()
         || which::which("llama-cpp-server").is_ok()
         || which::which("llamafile").is_ok()
 }
 
-/// Download job for the llamafile runtime binary.
+/// Find llama-server in ~/.hyperlite/ or any extracted subdirectory.
+/// Returns the full path including the directory so the caller can set LD_LIBRARY_PATH.
+pub fn find_bundled_llama_server() -> Option<PathBuf> {
+    let base = real_home_dir().join(".hyperlite");
+    let direct = base.join("llama-server");
+    if direct.exists() { return Some(direct); }
+    // Check subdirectories — extraction puts everything in llama-b{build}/
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let candidate = entry.path().join("llama-server");
+                if candidate.exists() { return Some(candidate); }
+            }
+        }
+    }
+    None
+}
+
+
+/// Build the runtime install job per OS:
+/// - Linux: Ollama (CUDA auto-detected, works on WSL2 and native)
+/// - macOS: brew install llama.cpp (Metal auto-detected, no sudo)
+/// - Windows: GitHub API latest release
+/// - Fallback: llamafile
 fn runtime_download_job() -> DownloadJob {
+    let os = std::env::consts::OS;
+
+    // Linux — Ollama handles CUDA automatically on both native Linux and WSL2
+    if os == "linux" {
+        return DownloadJob {
+            name:        "Ollama (GPU-accelerated inference)".to_string(),
+            url:         String::new(), filename: String::new(), is_runtime: true,
+            needs_sudo:  true,
+            install_cmd: Some(vec![
+                "sudo".into(), "-S".into(), "sh".into(), "-c".into(),
+                "curl -fsSL https://ollama.com/install.sh | sh".into(),
+            ]),
+        };
+    }
+
+    // macOS — brew handles Metal automatically, no sudo needed
+    if which::which("brew").is_ok() {
+        return DownloadJob {
+            name:        "llama-server via brew".to_string(),
+            url:         String::new(), filename: String::new(), is_runtime: true,
+            needs_sudo:  false,
+            install_cmd: Some(vec!["brew".into(), "install".into(), "llama.cpp".into()]),
+        };
+    }
+
+    // Windows / anything else — GitHub API picks the right build
+    let has_nvidia = which::which("nvidia-smi").is_ok();
+    let has_rocm   = which::which("rocm-smi").is_ok();
+    let arch       = std::env::consts::ARCH;
+    let accel      = if has_nvidia { "cuda" } else if has_rocm { "rocm" } else { "cpu" };
+
     DownloadJob {
-        name:       "llamafile  (inference runtime)".to_string(),
-        url:        "https://github.com/Mozilla-Ocho/llamafile/releases/download/0.9.2/llamafile-0.9.2".to_string(),
-        filename:   if cfg!(windows) { "llamafile.exe" } else { "llamafile" }.to_string(),
-        is_runtime: true,
+        name:        format!("llama-server ({} / {} {})", accel, os, arch),
+        url:         format!("GITHUB_LATEST:{}:{}:{}:ggerganov/llama.cpp", os, arch, accel),
+        filename:    "llama-server-archive".to_string(),
+        is_runtime:  true,
+        install_cmd: None,
+        needs_sudo:  false,
     }
 }
 
-// ── Download progress events ──────────────────────────────────────────────────
+fn llamafile_download_job() -> DownloadJob {
+    let filename = if cfg!(windows) { "llamafile.exe" } else { "llamafile" };
+    DownloadJob {
+        name:        "llamafile  (inference runtime)".to_string(),
+        url:         "https://github.com/Mozilla-Ocho/llamafile/releases/download/0.9.2/llamafile-0.9.2".to_string(),
+        filename:    filename.to_string(),
+        is_runtime:  true,
+        install_cmd: None,
+        needs_sudo:  false,
+    }
+}
+
+// ── Download / install progress events ───────────────────────────────────────
 
 #[derive(Debug)]
 enum DlEvent {
@@ -119,14 +189,17 @@ enum DlEvent {
     Failed(String), // error message
 }
 
+
 // ── Pending download job ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct DownloadJob {
-    name:       String,  // display name shown in UI
-    url:        String,  // download URL
-    filename:   String,  // destination filename
-    is_runtime: bool,    // if true, save to ~/.hyperlite/ and chmod+x
+    name:        String,
+    url:         String,
+    filename:    String,
+    is_runtime:  bool,
+    install_cmd: Option<Vec<String>>,
+    needs_sudo:  bool,  // if true, prompt user for password before running install_cmd
 }
 
 // ── Recommended models ────────────────────────────────────────────────────────
@@ -259,6 +332,10 @@ struct SetupState {
     selected:          Vec<bool>,
     list_idx:          usize,
     runtime_needed:    bool,
+    // Sudo password prompt
+    sudo_prompt:       bool,    // waiting for user to enter password
+    sudo_input:        String,  // password being typed (never displayed)
+    // File download state
     download_queue:    Vec<DownloadJob>,
     current_dl:        Option<DownloadJob>,
     dl_progress:       f64,
@@ -271,8 +348,8 @@ struct SetupState {
     dl_speed_bps:      f64,
     dl_start:          Option<Instant>,
     dl_rx:             Option<tmpsc::UnboundedReceiver<DlEvent>>,
-    dl_total_queued:   usize,   // set once when downloads begin, for overall progress
-    dl_complete_ticks: u8,      // counts up after all downloads done before returning
+    dl_total_queued:   usize,
+    dl_complete_ticks: u8,
     http_client:       reqwest::Client,
     splash_tick:       u8,
     error_msg:         Option<String>,
@@ -297,8 +374,7 @@ impl SetupState {
             .cloned()
             .collect();
 
-        let selected = vec![false; models.len()];
-
+        let selected    = vec![false; models.len()];
         Self {
             step: SetupStep::Splash,
             hardware,
@@ -306,6 +382,8 @@ impl SetupState {
             selected,
             list_idx: 0,
             runtime_needed: !has_runtime(),
+            sudo_prompt: false,
+            sudo_input: String::new(),
             download_queue: vec![],
             current_dl: None,
             dl_progress: 0.0,
@@ -330,10 +408,12 @@ impl SetupState {
         self.models.iter().zip(self.selected.iter())
             .filter_map(|(m, &sel)| if sel {
                 Some(DownloadJob {
-                    name:       m.display.to_string(),
-                    url:        m.hf_url(),
-                    filename:   m.hf_file.to_string(),
-                    is_runtime: false,
+                    name:        m.display.to_string(),
+                    url:         m.hf_url(),
+                    filename:    m.hf_file.to_string(),
+                    is_runtime:  false,
+                    install_cmd: None,
+                    needs_sudo:  false,
                 })
             } else {
                 None
@@ -372,7 +452,6 @@ pub async fn run_startup(
                     if key.code == KeyCode::Enter || key.code == KeyCode::Char(' ') {
                         if !existing_models.is_empty() || has_local_models() {
                             if state.runtime_needed {
-                                // Have models but no runtime — download it now
                                 state.download_queue = vec![runtime_download_job()];
                                 state.step = SetupStep::Downloading;
                             } else {
@@ -438,10 +517,10 @@ pub async fn run_startup(
                     }
                     KeyCode::Enter => {
                         let mut jobs = state.selected_jobs();
-                        if state.runtime_needed {
-                            jobs.push(runtime_download_job());
-                        }
                         if !jobs.is_empty() {
+                            if state.runtime_needed {
+                                jobs.push(runtime_download_job());
+                            }
                             state.download_queue = jobs;
                             state.step = SetupStep::Downloading;
                         } else if can_proceed {
@@ -459,6 +538,19 @@ pub async fn run_startup(
             }
 
             SetupStep::Downloading => {
+                // Handle sudo password input
+                if state.sudo_prompt {
+                    match key.code {
+                        KeyCode::Enter => {
+                            state.sudo_prompt = false;
+                            start_next_download(&mut state);
+                        }
+                        KeyCode::Backspace => { state.sudo_input.pop(); }
+                        KeyCode::Char(c) => { state.sudo_input.push(c); }
+                        _ => {}
+                    }
+                    continue;
+                }
                 if (key.code == KeyCode::Char('s') || key.code == KeyCode::Esc)
                     && (!existing_models.is_empty() || !state.dl_done.is_empty() || has_local_models())
                 {
@@ -482,16 +574,82 @@ fn start_next_download(state: &mut SetupState) {
     state.dl_bytes_total = 0;
     state.dl_bytes_done  = 0;
     state.dl_speed_bps   = 0.0;
-    state.dl_status_msg  = "connecting…".to_string();
     state.dl_start       = Some(Instant::now());
-    state.dl_log.push(format!("Downloading {}…", job.name));
 
     let (tx, rx) = tmpsc::unbounded_channel::<DlEvent>();
     state.dl_rx = Some(rx);
 
-    // Build a dedicated client with no request timeout — model files can be
-    // several GB and would exceed the 120-second app-wide client timeout.
+    // Package manager install — run subprocess instead of HTTP download
+    if let Some(ref cmd) = job.install_cmd {
+        // If this job needs sudo and we don't have a password yet, pause and prompt
+        if job.needs_sudo && state.sudo_input.is_empty() {
+            state.sudo_prompt = true;
+            state.download_queue.insert(0, job); // put it back at the front
+            return;
+        }
+        state.dl_status_msg = "installing…".to_string();
+        state.dl_log.push(format!("Installing {}…", job.name));
+        let cmd = cmd.clone();
+        let name = job.name.clone();
+        let password = if job.needs_sudo { Some(state.sudo_input.clone()) } else { None };
+        state.current_dl = Some(job);
+        tokio::spawn(async move {
+            use tokio::io::{AsyncWriteExt, AsyncBufReadExt, BufReader};
+            let mut child = match tokio::process::Command::new(&cmd[0])
+                .args(&cmd[1..])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => { let _ = tx.send(DlEvent::Failed(e.to_string())); return; }
+            };
+            // Pipe password to sudo -S stdin then close it
+            if let (Some(pw), Some(mut stdin)) = (password, child.stdin.take()) {
+                let _ = stdin.write_all(format!("{}\n", pw).as_bytes()).await;
+                // stdin drops here, closing it so the child doesn't wait for more input
+            }
+            // Stream stdout and stderr as status lines
+            if let Some(stdout) = child.stdout.take() {
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(stdout).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let clean = line.trim().to_string();
+                        if !clean.is_empty() {
+                            let _ = tx2.send(DlEvent::Status(clean));
+                        }
+                    }
+                });
+            }
+            if let Some(stderr) = child.stderr.take() {
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let clean = line.trim().to_string();
+                        if !clean.is_empty() {
+                            let _ = tx2.send(DlEvent::Status(clean));
+                        }
+                    }
+                });
+            }
+            match child.wait().await {
+                Ok(s) if s.success() => { let _ = tx.send(DlEvent::Done(name)); }
+                Ok(s) => { let _ = tx.send(DlEvent::Failed(format!("exited {}", s))); }
+                Err(e) => { let _ = tx.send(DlEvent::Failed(e.to_string())); }
+            }
+        });
+        return;
+    }
+
+    state.dl_status_msg = "connecting…".to_string();
+    state.dl_log.push(format!("Downloading {}…", job.name));
+
     let client = reqwest::Client::builder()
+        .user_agent("HyperLite")
+        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .unwrap_or_else(|_| state.http_client.clone());
     let url        = job.url.clone();
@@ -501,6 +659,74 @@ fn start_next_download(state: &mut SetupState) {
     state.current_dl = Some(job);
 
     tokio::spawn(async move {
+        // Resolve GITHUB_LATEST sentinel → real download URL via GitHub API
+        let (resolved_url, resolved_filename) = if url.starts_with("GITHUB_LATEST:") {
+            let _ = tx.send(DlEvent::Status("resolving latest release…".to_string()));
+            // Format: GITHUB_LATEST:os:arch:accel:owner/repo
+            let parts: Vec<&str> = url.splitn(5, ':').collect();
+            let (os, arch, accel, repo) = if parts.len() == 5 {
+                (parts[1], parts[2], parts[3], parts[4])
+            } else {
+                let _ = tx.send(DlEvent::Failed("bad GITHUB_LATEST format".to_string())); return;
+            };
+
+            let api_url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+            let api_resp = match client.get(&api_url).send().await {
+                Ok(r) => r,
+                Err(e) => { let _ = tx.send(DlEvent::Failed(format!("GitHub API: {}", e))); return; }
+            };
+            if !api_resp.status().is_success() {
+                let _ = tx.send(DlEvent::Failed(format!("GitHub API HTTP {}", api_resp.status()))); return;
+            }
+            let json: serde_json::Value = match api_resp.json().await {
+                Ok(j) => j,
+                Err(e) => { let _ = tx.send(DlEvent::Failed(format!("GitHub API parse: {}", e))); return; }
+            };
+
+            let assets = match json["assets"].as_array() {
+                Some(a) => a.clone(),
+                None => { let _ = tx.send(DlEvent::Failed("no assets in release".to_string())); return; }
+            };
+
+            // Pick the best asset for this OS/arch/accel
+            // Asset names use "x64" (not "x86_64"), "arm64" for aarch64.
+            // Linux has no CUDA build — NVIDIA uses vulkan build instead.
+            // Ubuntu builds work on Debian and all Debian-based distros.
+            // Windows has separate cuda-12.x and cuda-13.x builds; pick cuda-12 for widest compat.
+            let asset = assets.iter().find(|a| {
+                let n = a["name"].as_str().unwrap_or("").to_lowercase();
+                match (os, arch, accel) {
+                    ("linux",   "x86_64",  "cuda") => n.contains("ubuntu") && n.contains("vulkan") && n.contains("x64") && !n.contains("arm"),
+                    ("linux",   "x86_64",  "rocm") => n.contains("ubuntu") && n.contains("rocm")   && n.contains("x64") && !n.contains("arm"),
+                    ("linux",   "x86_64",  _     ) => n.contains("ubuntu") && !n.contains("vulkan") && !n.contains("rocm") && !n.contains("openvino") && n.contains("x64") && !n.contains("arm"),
+                    ("linux",   "aarch64", _     ) => n.contains("ubuntu") && n.contains("arm64")  && !n.contains("vulkan"),
+                    ("macos",   "aarch64", _     ) => n.contains("macos")  && n.contains("arm64"),
+                    ("macos",   "x86_64",  _     ) => n.contains("macos")  && n.contains("x64"),
+                    ("windows", "x86_64",  "cuda") => n.contains("win")    && n.contains("cuda-12") && n.contains("x64"),
+                    ("windows", "x86_64",  "rocm") => n.contains("win")    && n.contains("hip")    && n.contains("x64"),
+                    ("windows", "x86_64",  _     ) => n.contains("win")    && n.contains("cpu")    && n.contains("x64"),
+                    _ => false,
+                }
+            });
+
+            match asset {
+                Some(a) => {
+                    let dl_url  = a["browser_download_url"].as_str().unwrap_or("").to_string();
+                    let dl_name = a["name"].as_str().unwrap_or("llama-server-archive").to_string();
+                    if dl_url.is_empty() {
+                        let _ = tx.send(DlEvent::Failed("no download URL in asset".to_string())); return;
+                    }
+                    let _ = tx.send(DlEvent::Status(format!("found: {}", dl_name)));
+                    (dl_url, dl_name)
+                }
+                None => {
+                    let _ = tx.send(DlEvent::Failed("no matching asset for this platform — falling back".to_string())); return;
+                }
+            }
+        } else {
+            (url, filename)
+        };
+
         // Runtimes go to ~/.hyperlite/, models go to ~/.hyperlite/models/
         let dest = if is_runtime {
             let base = dirs::home_dir()
@@ -510,10 +736,10 @@ fn start_next_download(state: &mut SetupState) {
                 let _ = tx.send(DlEvent::Failed(format!("Could not create dir: {}", e)));
                 return;
             }
-            base.join(&filename)
+            base.join(&resolved_filename)
         } else {
             match crate::startup::ensure_models_dir() {
-                Ok(d)  => d.join(&filename),
+                Ok(d)  => d.join(&resolved_filename),
                 Err(e) => { let _ = tx.send(DlEvent::Failed(format!("Could not create models dir: {}", e))); return; }
             }
         };
@@ -526,16 +752,13 @@ fn start_next_download(state: &mut SetupState) {
 
         let _ = tx.send(DlEvent::Status("connecting…".to_string()));
 
-        let resp = match client.get(&url)
-            .header("User-Agent", "HyperLite/0.1")
-            .send().await
-        {
+        let resp = match client.get(&resolved_url).send().await {
             Ok(r)  => r,
             Err(e) => { let _ = tx.send(DlEvent::Failed(e.to_string())); return; }
         };
 
         if !resp.status().is_success() {
-            let _ = tx.send(DlEvent::Failed(format!("HTTP {} from {}", resp.status(), url)));
+            let _ = tx.send(DlEvent::Failed(format!("HTTP {} from {}", resp.status(), resolved_url)));
             return;
         }
 
@@ -572,20 +795,64 @@ fn start_next_download(state: &mut SetupState) {
         let _ = file.flush().await;
         drop(file);
 
-        // Make runtime executable on Unix
+        // Runtime post-processing
         #[cfg(unix)]
         if is_runtime {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(&dest) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&dest, perms);
+            let dest_str = dest.to_string_lossy().to_string();
+            let is_archive = dest_str.ends_with(".tar.gz") || dest_str.ends_with(".zip");
+
+            if is_archive {
+                // Extract the archive and find llama-server inside it.
+                let hyperlite_dir = dest.parent().unwrap_or(&dest).to_path_buf();
+                let _ = tx.send(DlEvent::Status("extracting…".to_string()));
+
+                let extract_result = if dest_str.ends_with(".tar.gz") {
+                    tokio::process::Command::new("tar")
+                        .args(["-xzf", &dest_str, "-C", &hyperlite_dir.to_string_lossy()])
+                        .output().await
+                } else {
+                    tokio::process::Command::new("unzip")
+                        .args(["-o", &dest_str, "-d", &hyperlite_dir.to_string_lossy()])
+                        .output().await
+                };
+
+                // Remove the archive regardless of extraction result
+                let _ = tokio::fs::remove_file(&dest).await;
+
+                if extract_result.map(|o| o.status.success()).unwrap_or(false) {
+                    // Find llama-server in the extracted files and move it to ~/.hyperlite/
+                    let find = tokio::process::Command::new("find")
+                        .args([&hyperlite_dir.to_string_lossy().to_string(), "-name", "llama-server", "-type", "f"])
+                        .output().await;
+
+                    if let Ok(out) = find {
+                        let found = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if !found.is_empty() {
+                            let server_bin = hyperlite_dir.join("llama-server");
+                            let _ = tokio::fs::rename(&found, &server_bin).await;
+                            if let Ok(meta) = std::fs::metadata(&server_bin) {
+                                let mut perms = meta.permissions();
+                                perms.set_mode(0o755);
+                                let _ = std::fs::set_permissions(&server_bin, perms);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Single binary (llamafile) — just chmod
+                if let Ok(meta) = std::fs::metadata(&dest) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(0o755);
+                    let _ = std::fs::set_permissions(&dest, perms);
+                }
             }
         }
 
         let _ = tx.send(DlEvent::Done(name));
     });
 }
+
 
 /// Drain progress channel and update state. Non-blocking.
 fn poll_download_progress(state: &mut SetupState) {
@@ -614,17 +881,48 @@ fn poll_download_progress(state: &mut SetupState) {
                 state.dl_status_msg = "complete".to_string();
                 state.dl_done.push(name.clone());
                 state.dl_log.push(format!("✓ {} ready", name));
-                state.current_dl    = None;
-                state.dl_rx         = None;
+
+                // If Ollama is now available and this was a model (not runtime),
+                // register the GGUF with Ollama so it can serve it
+                let finished = state.current_dl.take();
+                if let Some(job) = &finished {
+                    if !job.is_runtime && which::which("ollama").is_ok() {
+                        let model_path = crate::startup::models_dir().join(&job.filename);
+                        let model_name = job.filename
+                            .trim_end_matches(".gguf")
+                            .replace(['.', ' '], "-")
+                            .to_lowercase();
+                        state.dl_log.push(format!("Registering {} with Ollama…", model_name));
+                        let path_str = model_path.to_string_lossy().to_string();
+                        tokio::spawn(async move {
+                            // Ollama requires a Modelfile with a FROM directive
+                            let modelfile = format!("FROM {}", path_str);
+                            let modelfile_path = format!("/tmp/Modelfile-{}", model_name);
+                            let _ = tokio::fs::write(&modelfile_path, modelfile).await;
+                            let _ = tokio::process::Command::new("ollama")
+                                .args(["create", &model_name, "-f", &modelfile_path])
+                                .output()
+                                .await;
+                            let _ = tokio::fs::remove_file(&modelfile_path).await;
+                        });
+                    }
+                }
+
+                state.dl_rx = None;
                 start_next_download(state);
                 return;
             }
             Ok(DlEvent::Failed(e)) => {
-                let name = state.current_dl.as_ref().map(|j| j.name.clone()).unwrap_or_default();
-                state.dl_failed.push(name.clone());
-                state.dl_log.push(format!("✗ {} — {}", name, e));
-                state.current_dl = None;
-                state.dl_rx      = None;
+                let failed = state.current_dl.take().unwrap();
+                state.dl_failed.push(failed.name.clone());
+                state.dl_log.push(format!("✗ {} — {}", failed.name, e));
+                state.dl_rx = None;
+                // If a package manager install failed, fall back to llamafile
+                if failed.install_cmd.is_some() {
+                    state.dl_log.push("Falling back to llamafile…".to_string());
+                    state.download_queue.insert(0, llamafile_download_job());
+                    state.dl_failed.pop(); // don't count the fallback as a permanent failure
+                }
                 start_next_download(state);
                 return;
             }
@@ -857,11 +1155,11 @@ fn render_model_select(f: &mut ratatui::Frame, area: Rect, state: &mut SetupStat
         chunks[0],
     );
 
-    // Runtime status line
-    let (rt_icon, rt_text, rt_col) = if state.runtime_needed {
-        ("↓", "  llamafile will be downloaded automatically  (inference runtime)", orange)
+    // Runtime status line — show what was detected/installed
+    let (rt_icon, rt_text, rt_col) = if !state.runtime_needed {
+        ("✓", "  Inference runtime ready".to_string(), green)
     } else {
-        ("✓", "  Inference runtime found", green)
+        ("✓", "  Runtime installed in previous step".to_string(), green)
     };
     f.render_widget(
         Paragraph::new(Line::from(vec![
@@ -907,12 +1205,8 @@ fn render_model_select(f: &mut ratatui::Frame, area: Rect, state: &mut SetupStat
     let sel_count = state.selected.iter().filter(|&&s| s).count();
     let (action_col, action_text) = if let Some(ref err) = state.error_msg {
         (red, format!("  ✗  {}", err))
-    } else if sel_count == 0 && state.runtime_needed {
-        (orange, "  Enter to download llamafile runtime  ·  Esc to skip (if you already have models)".to_string())
     } else if sel_count == 0 {
         (muted, "  No models selected  ·  Enter or Esc to skip (if you already have models)".to_string())
-    } else if state.runtime_needed {
-        (green, format!("  {} model(s) + llamafile runtime  ·  Enter to download", sel_count))
     } else {
         (green, format!("  {} model(s) selected  ·  Enter to download from HuggingFace", sel_count))
     };
@@ -936,6 +1230,28 @@ fn render_downloading(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
     let white  = ratatui::style::Color::Rgb(224, 223, 255);
     let red    = ratatui::style::Color::Rgb(255,  85,  85);
     let bg     = ratatui::style::Color::Rgb(16,  16,  30);
+
+    // Sudo password prompt overlay
+    if state.sudo_prompt {
+        let popup = centered_rect(50, 5, area);
+        f.render_widget(ratatui::widgets::Clear, popup);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(orange))
+            .title(Line::from(vec![Span::styled(" sudo password ", Style::default().fg(orange).add_modifier(Modifier::BOLD))]))
+            .style(Style::default().bg(bg));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+        let dots = "●".repeat(state.sudo_input.len());
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(vec![Span::styled("  Enter your sudo password:", Style::default().fg(white))]),
+                Line::from(vec![Span::styled(format!("  {}_", dots), Style::default().fg(teal).add_modifier(Modifier::BOLD))]),
+            ]),
+            inner,
+        );
+        return;
+    }
 
     let all_done   = state.current_dl.is_none() && state.download_queue.is_empty();
     let total      = state.dl_total_queued;

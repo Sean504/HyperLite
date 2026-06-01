@@ -127,6 +127,9 @@ pub struct App {
     // Diff approval — pending write waiting for user to approve/discard
     pub pending_diff: Option<PendingDiff>,
 
+    // Sandbox mode — shell commands run inside bwrap isolation
+    pub sandbox_enabled: bool,
+
     // Toast
     pub toast: Option<crate::ui::components::toast::Toast>,
 
@@ -1202,6 +1205,18 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                     app.project_context_active = false;
                     app.push_toast(crate::ui::components::toast::Toast::info("Git context disabled."));
                 }
+                Some("Enable Sandbox") => {
+                    if crate::tools::shell::bwrap_available() {
+                        app.sandbox_enabled = true;
+                        app.push_toast(crate::ui::components::toast::Toast::success("Sandbox enabled — shell commands isolated via bwrap."));
+                    } else {
+                        app.push_toast(crate::ui::components::toast::Toast::error("bwrap not found. Install it: sudo apt install bubblewrap"));
+                    }
+                }
+                Some("Disable Sandbox") => {
+                    app.sandbox_enabled = false;
+                    app.push_toast(crate::ui::components::toast::Toast::info("Sandbox disabled — shell runs directly."));
+                }
                 Some("Index Folder")       => open_dialog(app, ActiveDialog::IndexConfirm),
                 Some("Search Index")       => open_dialog(app, ActiveDialog::RagSearch),
                 Some("Clear Index")        => {
@@ -1657,8 +1672,16 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
             }
         }
 
-        // Execute (this is async for shell; synchronous for file ops)
-        let result = crate::tools::execute(call, &app.working_dir, &app.http_client, &app.db).await;
+        // Execute — route shell through sandbox if enabled
+        let result = if call.name == "shell" && app.sandbox_enabled {
+            let r = crate::tools::shell::execute_sandboxed(&call.parameters, &app.working_dir).await;
+            match r {
+                Ok(o)  => crate::tools::ToolResult { call_id: call.id.clone(), name: call.name.clone(), output: o, error: None, is_error: false },
+                Err(e) => crate::tools::ToolResult { call_id: call.id.clone(), name: call.name.clone(), output: String::new(), error: Some(e.to_string()), is_error: true },
+            }
+        } else {
+            crate::tools::execute(call, &app.working_dir, &app.http_client, &app.db).await
+        };
 
         let (status, content) = if result.is_error {
             ("error", result.error.unwrap_or_else(|| "Unknown error".to_string()))

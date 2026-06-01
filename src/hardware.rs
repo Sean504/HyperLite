@@ -576,4 +576,53 @@ impl HardwareInfo {
             tier.description()
         )
     }
+
+    /// Derive optimal llama-server launch parameters from detected hardware.
+    /// These are passed directly to the inference runtime.
+    pub fn optimal_inference_params(&self) -> InferenceParams {
+        let vram  = self.best_vram_mb;
+        let ram   = self.memory.total_mb;
+
+        // Context window — scale with available VRAM (GPU) or RAM (CPU).
+        // Conservative: assume model weights use ~half of total VRAM, rest is KV cache.
+        let ctx_size = if !self.cpu_only {
+            if vram >= 40_000 { 65536 }
+            else if vram >= 20_000 { 32768 }
+            else if vram >= 10_000 { 16384 }
+            else if vram >= 5_000  { 8192  }
+            else                   { 4096  }
+        } else {
+            // CPU-only: KV cache lives in RAM — be conservative
+            if ram >= 64_000 { 16384 }
+            else if ram >= 32_000 { 8192 }
+            else if ram >= 16_000 { 4096 }
+            else                  { 2048 }
+        };
+
+        // Batch size — larger batches speed up prompt processing (prefill).
+        // GPU has enough memory bandwidth to handle large batches.
+        let batch_size = if !self.cpu_only { 2048 } else { 512 };
+
+        // GPU layers — load everything on GPU if available.
+        let n_gpu_layers = if self.cpu_only { 0 } else { 99 };
+
+        // Threads — physical cores (not logical, avoids hyperthreading overhead).
+        let threads = self.cpu.physical_cores.max(1) as u32;
+
+        // Flash attention — always enabled; requires no extra memory and is faster.
+        let flash_attn = true;
+
+        InferenceParams { ctx_size, batch_size, n_gpu_layers, threads, flash_attn }
+    }
+}
+
+/// Optimal runtime parameters derived from hardware detection.
+/// Passed to llama-server / llamafile at startup.
+#[derive(Debug, Clone)]
+pub struct InferenceParams {
+    pub ctx_size:     u32,
+    pub batch_size:   u32,
+    pub n_gpu_layers: u32,
+    pub threads:      u32,
+    pub flash_attn:   bool,
 }
