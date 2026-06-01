@@ -227,6 +227,7 @@ async fn run_app() -> anyhow::Result<()> {
         dialog_selected_idx: 0,
 
         pending_permission: None,
+        pending_diff:       None,
         toast:              None,
 
         http_client,

@@ -56,7 +56,13 @@ jobs:
       - name: Install Linux deps
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
- 
+
+      - name: Set Cargo.toml version from tag
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
  

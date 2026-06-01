@@ -28,6 +28,12 @@ fn build_hints(app: &App) -> Vec<Span<'static>> {
         ]
     };
 
+    if app.pending_diff.is_some() {
+        spans.extend(kb("Enter", "apply diff"));
+        spans.extend(kb("Esc", "discard"));
+        return spans;
+    }
+
     if app.is_streaming() {
         spans.extend(kb("Ctrl+C", "Stop"));
     } else {

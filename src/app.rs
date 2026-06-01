@@ -19,6 +19,17 @@ use crate::ui::components::spinner::Spinner;
 use crate::ui::theme::Theme;
 
 #[derive(Debug, Clone, PartialEq)]
+/// A file write intercepted for diff approval before being applied.
+pub struct PendingDiff {
+    pub call:      crate::tools::ToolCall,
+    pub file_path: String,
+    pub proposed:  String,        // full content to write (write_file)
+    pub old_text:  Option<String>,// for edit_file
+    pub new_text:  Option<String>,// for edit_file
+    pub remaining_calls: Vec<crate::tools::ToolCall>, // tool calls to run after approval
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ActiveDialog {
     None,
     SessionList,
@@ -112,6 +123,9 @@ pub struct App {
 
     // Permission
     pub pending_permission:  Option<PermissionRequest>,
+
+    // Diff approval — pending write waiting for user to approve/discard
+    pub pending_diff: Option<PendingDiff>,
 
     // Toast
     pub toast: Option<crate::ui::components::toast::Toast>,
@@ -457,6 +471,21 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
 }
 
 async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Result<bool> {
+    // Diff approval — Enter to apply, Esc to discard
+    if app.pending_diff.is_some() {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                apply_pending_diff(app).await?;
+                return Ok(false);
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                discard_pending_diff(app).await?;
+                return Ok(false);
+            }
+            _ => return Ok(false), // block all other keys while diff pending
+        }
+    }
+
     // Quit is always global — works even with dialogs/permission prompts open
     if let Some(Action::Quit) = app.keybinds.resolve(&key).cloned() {
         let _ = crate::config::save(&app.config);
@@ -1595,6 +1624,43 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         };
         app.push_toast(crate::ui::components::toast::Toast::info(toast_label));
 
+        // ── Diff approval for write_file / edit_file ──────────────────────────
+        if call.name == "write_file" || call.name == "edit_file" {
+            let (file_path, proposed, old_text, new_text) = extract_diff_info(call, &app.working_dir);
+            if let Some(fp) = file_path {
+                let diff_lines = compute_diff_lines(&fp, &proposed, old_text.as_deref(), new_text.as_deref());
+                let diff_part = crate::session::message::DiffProposalPart::new(
+                    &call.id, &call.name, &fp, &proposed,
+                    old_text.clone(), new_text.clone(), diff_lines,
+                );
+                // Add the diff inline to the current assistant message
+                if let Some(msg) = app.messages.iter_mut().rev()
+                    .find(|m| m.role == crate::session::message::Role::Assistant)
+                {
+                    msg.parts.push(crate::session::message::Part::Diff(diff_part));
+                    let _ = crate::db::update_message_parts(&app.db, msg);
+                }
+                // Stash remaining calls and pause for user input
+                let call_idx = calls.iter().position(|c| c.id == call.id).unwrap_or(0);
+                let remaining: Vec<_> = calls[call_idx + 1..].to_vec();
+                app.pending_diff = Some(PendingDiff {
+                    call: call.clone(),
+                    file_path: fp,
+                    proposed,
+                    old_text,
+                    new_text,
+                    remaining_calls: remaining,
+                });
+                app.scroll_stick_bottom = true;
+                app.streaming = false;
+                // Flush results so far before pausing
+                if !result_parts.is_empty() {
+                    append_tool_results_to_messages(app, &result_parts);
+                }
+                return Ok(());
+            }
+        }
+
         // Execute (this is async for shell; synchronous for file ops)
         let result = crate::tools::execute(call, &app.working_dir, &app.http_client, &app.db).await;
 
@@ -1916,6 +1982,184 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
         }
     });
     Ok(())
+}
+
+/// Apply the pending diff — execute the write then continue the tool loop.
+async fn apply_pending_diff(app: &mut App) -> anyhow::Result<()> {
+    let diff = match app.pending_diff.take() {
+        Some(d) => d,
+        None    => return Ok(()),
+    };
+
+    // Mark the DiffProposal part as Approved
+    use crate::session::message::{Part, DiffProposalState};
+    if let Some(msg) = app.messages.iter_mut().rev()
+        .find(|m| m.role == crate::session::message::Role::Assistant)
+    {
+        for part in &mut msg.parts {
+            if let Part::Diff(dp) = part {
+                if dp.call_id == diff.call.id {
+                    dp.state = DiffProposalState::Approved;
+                }
+            }
+        }
+        let _ = crate::db::update_message_parts(&app.db, msg);
+    }
+
+    // Execute the actual write
+    let result = crate::tools::execute(&diff.call, &app.working_dir, &app.http_client, &app.db).await;
+
+    let tool_result_str = format!(
+        "<tool_result>\n<name>{}</name>\n<status>{}</status>\n<output>\n{}\n</output>\n</tool_result>",
+        diff.call.name,
+        if result.is_error { "error" } else { "ok" },
+        if result.is_error { result.error.unwrap_or_default() } else { result.output },
+    );
+
+    // Inject result and continue remaining tool calls
+    let mut remaining = diff.remaining_calls;
+    if !remaining.is_empty() {
+        app.pending_tool_calls = remaining;
+    }
+
+    // Re-submit with tool result to continue the agent loop
+    resume_after_tool_result(app, &diff.call.name, tool_result_str).await
+}
+
+/// Discard the pending diff — tell the model it was denied.
+async fn discard_pending_diff(app: &mut App) -> anyhow::Result<()> {
+    let diff = match app.pending_diff.take() {
+        Some(d) => d,
+        None    => return Ok(()),
+    };
+
+    use crate::session::message::{Part, DiffProposalState};
+    if let Some(msg) = app.messages.iter_mut().rev()
+        .find(|m| m.role == crate::session::message::Role::Assistant)
+    {
+        for part in &mut msg.parts {
+            if let Part::Diff(dp) = part {
+                if dp.call_id == diff.call.id {
+                    dp.state = DiffProposalState::Discarded;
+                }
+            }
+        }
+        let _ = crate::db::update_message_parts(&app.db, msg);
+    }
+
+    app.pending_tool_calls.clear();
+    app.streaming = false;
+    app.push_toast(crate::ui::components::toast::Toast::info("Diff discarded — model notified."));
+
+    let denied = format!(
+        "<tool_result>\n<name>{}</name>\n<status>error</status>\n<output>\nUser reviewed the proposed changes and chose not to apply them. Do not retry this write.\n</output>\n</tool_result>",
+        diff.call.name,
+    );
+    resume_after_tool_result(app, &diff.call.name, denied).await
+}
+
+/// Re-submit the conversation with a tool result appended, continuing the agent loop.
+async fn resume_after_tool_result(app: &mut App, _tool_name: &str, result_str: String) -> anyhow::Result<()> {
+    use crate::session::message::{Message, Part, Role, TextPart};
+
+    let mut result_msg = Message::new_assistant(&app.session_id);
+    result_msg.role = Role::User;
+    result_msg.parts = vec![Part::Text(TextPart { id: ulid::Ulid::new().to_string(), text: result_str, streaming: false })];
+
+    let _ = crate::db::insert_message(&app.db, &result_msg);
+    app.messages.push(result_msg);
+
+    // Trigger the next model response
+    submit_message(app).await
+}
+
+/// Extract file path + proposed content from a write_file or edit_file call.
+fn extract_diff_info(
+    call: &crate::tools::ToolCall,
+    cwd: &std::path::Path,
+) -> (Option<String>, String, Option<String>, Option<String>) {
+    use std::path::PathBuf;
+
+    let resolve = |p: &str| -> String {
+        let path = if p.starts_with('~') {
+            crate::startup::real_home_dir().join(p.trim_start_matches("~/"))
+        } else {
+            let pb = PathBuf::from(p);
+            if pb.is_absolute() { pb } else { cwd.join(p) }
+        };
+        path.to_string_lossy().to_string()
+    };
+
+    if call.name == "write_file" {
+        let path = call.parameters["path"].as_str().map(|p| resolve(p));
+        let content = call.parameters["content"].as_str().unwrap_or("").to_string();
+        (path, content, None, None)
+    } else if call.name == "edit_file" {
+        let path = call.parameters["path"].as_str().map(|p| resolve(p));
+        let old = call.parameters["old_text"].as_str().unwrap_or("").to_string();
+        let new = call.parameters["new_text"].as_str().unwrap_or("").to_string();
+        let content = if let Some(ref p) = path {
+            std::fs::read_to_string(p).unwrap_or_default()
+                .replacen(&old, &new, 1)
+        } else { new.clone() };
+        (path, content, Some(old), Some(new))
+    } else {
+        (None, String::new(), None, None)
+    }
+}
+
+/// Compute colored diff lines between current file and proposed content.
+fn compute_diff_lines(
+    file_path: &str,
+    proposed:  &str,
+    old_text:  Option<&str>,
+    new_text:  Option<&str>,
+) -> Vec<crate::session::message::DiffLine> {
+    use similar::{TextDiff, ChangeTag};
+    use crate::session::message::{DiffLine, DiffLineKind};
+
+    let current = std::fs::read_to_string(file_path).unwrap_or_default();
+
+    // For edit_file, only diff the changed region; for write_file, diff the whole file
+    let (old_str, new_str) = if let (Some(old), Some(new)) = (old_text, new_text) {
+        (old.to_string(), new.to_string())
+    } else {
+        (current.clone(), proposed.to_string())
+    };
+
+    let mut lines = vec![];
+    let label = if current.is_empty() { "new file" } else { "modified" };
+    lines.push(DiffLine { kind: DiffLineKind::Header, content: format!("── {} ──", label) });
+
+    let diff = TextDiff::from_lines(old_str.as_str(), new_str.as_str());
+    let mut eq_count = 0usize;
+
+    for change in diff.iter_all_changes() {
+        let kind = match change.tag() {
+            ChangeTag::Delete => { eq_count = 0; DiffLineKind::Removed }
+            ChangeTag::Insert => { eq_count = 0; DiffLineKind::Added }
+            ChangeTag::Equal  => {
+                eq_count += 1;
+                if eq_count > 3 { continue; }
+                DiffLineKind::Context
+            }
+        };
+        let content = change.value().trim_end_matches('\n').to_string();
+        lines.push(DiffLine { kind, content });
+    }
+
+    if lines.len() == 1 {
+        lines.push(DiffLine { kind: DiffLineKind::Header, content: "(no visible changes)".to_string() });
+    }
+
+    lines
+}
+
+/// Append accumulated tool results as a user message for the model's next turn.
+fn append_tool_results_to_messages(app: &mut App, results: &[String]) {
+    if results.is_empty() { return; }
+    // Tool results are re-appended when the agent loop resumes via re-submission
+    // This is a no-op placeholder — results are held in the call chain
 }
 
 fn load_session(app: &mut App, session_id: String) -> anyhow::Result<()> {

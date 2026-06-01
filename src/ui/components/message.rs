@@ -2,7 +2,7 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use crate::session::message::{Message, Part, Role};
+use crate::session::message::{Message, Part, Role, DiffLineKind, DiffProposalState};
 use crate::ui::theme::Theme;
 use super::tool_call::render_tool_part;
 
@@ -229,6 +229,40 @@ fn render_assistant(msg: &Message, theme: &Theme, width: u16, show_tool_details:
                 lines.push(Line::from(vec![
                     Span::styled(format!(" 📎 {}", f.filename), Style::default().fg(theme.accent)),
                 ]));
+            }
+
+            Part::Diff(dp) => {
+                // Header: file path + state
+                let state_label = match dp.state {
+                    DiffProposalState::Pending   => " ·  Enter → apply   Esc → discard",
+                    DiffProposalState::Approved  => " ·  ✓ applied",
+                    DiffProposalState::Discarded => " ·  ✗ discarded",
+                };
+                let header_color = match dp.state {
+                    DiffProposalState::Pending   => theme.accent,
+                    DiffProposalState::Approved  => theme.success,
+                    DiffProposalState::Discarded => theme.text_dim,
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(" ± ", Style::default().fg(header_color)),
+                    Span::styled(dp.file_path.clone(), Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+                    Span::styled(state_label.to_string(), Style::default().fg(header_color)),
+                ]));
+
+                // Diff lines
+                for dl in &dp.diff_lines {
+                    let (prefix, color) = match dl.kind {
+                        DiffLineKind::Added   => ("+ ", theme.success),
+                        DiffLineKind::Removed => ("- ", theme.error),
+                        DiffLineKind::Context => ("  ", theme.text_dim),
+                        DiffLineKind::Header  => ("  ", theme.text_dim),
+                    };
+                    let content = dl.content.clone();
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {}{}", prefix, content), Style::default().fg(color)),
+                    ]));
+                }
+                lines.push(Line::default());
             }
         }
     }

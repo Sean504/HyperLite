@@ -113,6 +113,7 @@ pub enum Part {
     Reasoning(ReasoningPart),
     Tool(ToolPart),
     File(FilePart),
+    Diff(DiffProposalPart),
 }
 
 // TextPart
@@ -273,6 +274,59 @@ pub struct FilePart {
     pub mime:     String,
     #[serde(with = "serde_bytes_base64")]
     pub data:     Vec<u8>,
+}
+
+// DiffProposalPart — shown inline in chat before a file write is applied
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffProposalPart {
+    pub id:        PartId,
+    pub call_id:   String,
+    pub tool_name: String,       // "write_file" or "edit_file"
+    pub file_path: String,
+    pub proposed:  String,       // full proposed content
+    pub old_text:  Option<String>, // for edit_file: the old text
+    pub new_text:  Option<String>, // for edit_file: the new text
+    pub diff_lines: Vec<DiffLine>,
+    pub state:     DiffProposalState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DiffProposalState {
+    Pending,
+    Approved,
+    Discarded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffLine {
+    pub kind:    DiffLineKind,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DiffLineKind {
+    Header,
+    Added,
+    Removed,
+    Context,
+}
+
+impl DiffProposalPart {
+    pub fn new(call_id: &str, tool_name: &str, file_path: &str, proposed: &str,
+               old_text: Option<String>, new_text: Option<String>,
+               diff_lines: Vec<DiffLine>) -> Self {
+        Self {
+            id: ulid::Ulid::new().to_string(),
+            call_id:    call_id.into(),
+            tool_name:  tool_name.into(),
+            file_path:  file_path.into(),
+            proposed:   proposed.into(),
+            old_text,
+            new_text,
+            diff_lines,
+            state: DiffProposalState::Pending,
+        }
+    }
 }
 
 mod serde_bytes_base64 {

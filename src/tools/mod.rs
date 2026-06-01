@@ -597,7 +597,7 @@ pub fn build_tool_prompt(tools: &[&str]) -> String {
 
 // ── Tool Call (parsed from model output) ─────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolCall {
     pub id:         String,
     pub name:       String,
@@ -605,7 +605,7 @@ pub struct ToolCall {
     pub source:     ToolCallSource,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ToolCallSource {
     /// Model emitted native JSON function call (OpenAI format)
     Native,
