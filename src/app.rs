@@ -1653,10 +1653,6 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
                 });
                 app.scroll_stick_bottom = true;
                 app.streaming = false;
-                // Flush results so far before pausing
-                if !result_parts.is_empty() {
-                    append_tool_results_to_messages(app, &result_parts);
-                }
                 return Ok(());
             }
         }
@@ -2017,13 +2013,20 @@ async fn apply_pending_diff(app: &mut App) -> anyhow::Result<()> {
     );
 
     // Inject result and continue remaining tool calls
-    let mut remaining = diff.remaining_calls;
-    if !remaining.is_empty() {
-        app.pending_tool_calls = remaining;
-    }
+    // Queue remaining calls then continue the existing tool loop
+    let remaining = diff.remaining_calls;
+    app.pending_tool_calls = remaining;
 
-    // Re-submit with tool result to continue the agent loop
-    resume_after_tool_result(app, &diff.call.name, tool_result_str).await
+    // Append the tool result to the last assistant message so the model
+    // sees it naturally when the tool loop re-fires — no fake user message
+    append_diff_result_to_message(app, &diff.call.id, &diff.call.name, &tool_result_str, false);
+
+    // Continue tool loop if there are more calls, otherwise fire enforcer
+    if app.pending_tool_calls.is_empty() {
+        app.tool_enforcer_pending = true;
+    }
+    app.streaming = false;
+    Ok(())
 }
 
 /// Discard the pending diff — tell the model it was denied.
@@ -2047,30 +2050,41 @@ async fn discard_pending_diff(app: &mut App) -> anyhow::Result<()> {
         let _ = crate::db::update_message_parts(&app.db, msg);
     }
 
-    app.pending_tool_calls.clear();
-    app.streaming = false;
-    app.push_toast(crate::ui::components::toast::Toast::info("Diff discarded — model notified."));
+    let denied = format!("User declined the proposed change to {}. Do not retry this write.", diff.call.name);
+    append_diff_result_to_message(app, &diff.call.id, &diff.call.name, &denied, true);
 
-    let denied = format!(
-        "<tool_result>\n<name>{}</name>\n<status>error</status>\n<output>\nUser reviewed the proposed changes and chose not to apply them. Do not retry this write.\n</output>\n</tool_result>",
-        diff.call.name,
-    );
-    resume_after_tool_result(app, &diff.call.name, denied).await
+    app.pending_tool_calls.clear();
+    app.tool_enforcer_pending = true;
+    app.streaming = false;
+    app.push_toast(crate::ui::components::toast::Toast::info("Change discarded."));
+    Ok(())
 }
 
-/// Re-submit the conversation with a tool result appended, continuing the agent loop.
-async fn resume_after_tool_result(app: &mut App, _tool_name: &str, result_str: String) -> anyhow::Result<()> {
-    use crate::session::message::{Message, Part, Role, TextPart};
+/// Append a tool result for a diff call directly to the last assistant message's Tool part.
+fn append_diff_result_to_message(app: &mut App, call_id: &str, name: &str, output: &str, is_error: bool) {
+    use crate::session::message::{Part, ToolPart, ToolState};
 
-    let mut result_msg = Message::new_assistant(&app.session_id);
-    result_msg.role = Role::User;
-    result_msg.parts = vec![Part::Text(TextPart { id: ulid::Ulid::new().to_string(), text: result_str, streaming: false })];
-
-    let _ = crate::db::insert_message(&app.db, &result_msg);
-    app.messages.push(result_msg);
-
-    // Trigger the next model response
-    submit_message(app).await
+    if let Some(msg) = app.messages.iter_mut().rev()
+        .find(|m| m.role == crate::session::message::Role::Assistant)
+    {
+        // Find existing Tool part for this call and update it, or add a new one
+        let existing = msg.parts.iter_mut().find_map(|p| {
+            if let Part::Tool(tp) = p { if tp.call_id == call_id { return Some(tp); } }
+            None
+        });
+        if let Some(tp) = existing {
+            tp.state  = if is_error { ToolState::Error } else { ToolState::Complete };
+            tp.output = if is_error { None } else { Some(output.to_string()) };
+            tp.error  = if is_error { Some(output.to_string()) } else { None };
+        } else {
+            let mut tp = ToolPart::new(call_id, name);
+            tp.state  = if is_error { ToolState::Error } else { ToolState::Complete };
+            tp.output = if is_error { None } else { Some(output.to_string()) };
+            tp.error  = if is_error { Some(output.to_string()) } else { None };
+            msg.parts.push(Part::Tool(tp));
+        }
+        let _ = crate::db::update_message_parts(&app.db, msg);
+    }
 }
 
 /// Extract file path + proposed content from a write_file or edit_file call.
@@ -2155,12 +2169,6 @@ fn compute_diff_lines(
     lines
 }
 
-/// Append accumulated tool results as a user message for the model's next turn.
-fn append_tool_results_to_messages(app: &mut App, results: &[String]) {
-    if results.is_empty() { return; }
-    // Tool results are re-appended when the agent loop resumes via re-submission
-    // This is a no-op placeholder — results are held in the call chain
-}
 
 fn load_session(app: &mut App, session_id: String) -> anyhow::Result<()> {
     app.session_id = session_id.clone();
