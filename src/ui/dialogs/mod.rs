@@ -12,6 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use crate::app::{ActiveDialog, App};
+use ratatui::widgets::Wrap as _Wrap;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     match &app.active_dialog {
@@ -29,6 +30,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         ActiveDialog::IndexConfirm   => render_index_confirm(frame, area, app),
         ActiveDialog::RagSearch      => render_rag_search(frame, area, app),
         ActiveDialog::MemoryInput    => render_memory_input(frame, area, app),
+        ActiveDialog::BwrapInstall   => render_bwrap_install(frame, area, app),
     }
 }
 
@@ -348,6 +350,90 @@ fn render_folder_input(frame: &mut Frame, area: Rect, app: &mut App) {
         ])),
         chunks[5],
     );
+}
+
+fn render_bwrap_install(frame: &mut Frame, area: Rect, app: &App) {
+    let purple = app.theme.primary;
+    let teal   = app.theme.accent;
+    let green  = app.theme.success;
+    let orange = app.theme.warning;
+    let red    = app.theme.error;
+    let dim    = app.theme.text_dim;
+    let white  = app.theme.text;
+    let bg     = app.theme.bg_panel;
+
+    let dialog = centered_rect(70, 24, area);
+    frame.render_widget(Clear, dialog);
+
+    let (title, border_col) = if app.bwrap_sudo_prompt {
+        (" Install bubblewrap — sudo password required ", orange)
+    } else if app.bwrap_installing {
+        (" Installing bubblewrap… ", purple)
+    } else if app.bwrap_install_log.iter().any(|l| l.contains('✓')) {
+        (" ✓  bubblewrap installed ", green)
+    } else {
+        (" ✗  Installation failed ", red)
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_col))
+        .title(Line::from(vec![Span::styled(title, Style::default().fg(border_col).add_modifier(Modifier::BOLD))]))
+        .style(Style::default().bg(bg));
+    let inner = block.inner(dialog);
+    frame.render_widget(block, dialog);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(inner);
+
+    // Log output
+    let log_h = chunks[0].height as usize;
+    let log_start = app.bwrap_install_log.len().saturating_sub(log_h);
+    let log_lines: Vec<Line<'static>> = app.bwrap_install_log[log_start..].iter().map(|l| {
+        let col = if l.contains('✓')      { green }
+            else if l.contains('✗')       { red   }
+            else if l.contains("…")       { teal  }
+            else                          { dim   };
+        Line::from(vec![Span::styled(format!("  {}", l), Style::default().fg(col))])
+    }).collect();
+    frame.render_widget(Paragraph::new(log_lines), chunks[0]);
+
+    // Bottom section: password prompt or status
+    if app.bwrap_sudo_prompt {
+        // Match the first-run sudo prompt style exactly
+        let prompt_block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(orange))
+            .style(Style::default().bg(bg));
+        let prompt_inner = prompt_block.inner(chunks[1]);
+        frame.render_widget(prompt_block, chunks[1]);
+
+        let dots = "●".repeat(app.bwrap_sudo_input.len());
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(vec![Span::styled("  Enter your sudo password:", Style::default().fg(white))]),
+                Line::from(vec![Span::styled(format!("  {}_", dots), Style::default().fg(teal).add_modifier(Modifier::BOLD))]),
+            ]),
+            prompt_inner,
+        );
+    } else if app.bwrap_installing {
+        let spinner = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"][0];
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!("  {}  installing…", spinner), Style::default().fg(teal)),
+            ])).block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(dim))),
+            chunks[1],
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("  Esc to close", Style::default().fg(dim)),
+            ])).block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(dim))),
+            chunks[1],
+        );
+    }
 }
 
 /// Centered rect helper used by all dialogs.

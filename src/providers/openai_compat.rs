@@ -33,6 +33,15 @@ struct ChatRequest<'a> {
     seed:        Option<i64>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     tools:       Vec<OaiTool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options:     Option<OllamaOptions>,
+}
+
+/// Ollama-specific options passed alongside the standard OpenAI request body.
+/// Ignored by non-Ollama backends.
+#[derive(Serialize)]
+struct OllamaOptions {
+    num_ctx: u32,
 }
 
 #[derive(Serialize, Clone)]
@@ -156,6 +165,16 @@ pub async fn stream_chat(
         build_oai_tools()
     };
 
+    // For Ollama, pass num_ctx to override the default 2048-token context window.
+    // This prevents 400 errors when tool results + system prompt exceed the default.
+    let ollama_options = if backend == BackendKind::Ollama {
+        let hw = crate::hardware::detect();
+        let ctx = hw.optimal_inference_params().ctx_size;
+        Some(OllamaOptions { num_ctx: ctx })
+    } else {
+        None
+    };
+
     let body = ChatRequest {
         model,
         messages:    &oai_messages,
@@ -166,6 +185,7 @@ pub async fn stream_chat(
         stop:        params.stop.clone(),
         seed:        params.seed,
         tools,
+        options:     ollama_options,
     };
 
     let response = client

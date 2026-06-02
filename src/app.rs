@@ -44,6 +44,7 @@ pub enum ActiveDialog {
     GitConfirm,    // shown on folder open when git repo detected — opt into git agent
     IndexConfirm,  // shown after git confirm — ask if user wants to RAG index
     RagSearch,     // text input for searching an index manually
+    BwrapInstall,  // bubblewrap install progress dialog
     MemoryInput,   // text input for saving a new memory fact
 }
 
@@ -129,7 +130,11 @@ pub struct App {
     pub pending_diff: Option<PendingDiff>,
 
     // Sandbox mode — shell commands run inside bwrap isolation
-    pub sandbox_enabled: bool,
+    pub sandbox_enabled:   bool,
+    pub bwrap_install_log: Vec<String>,
+    pub bwrap_installing:  bool,
+    pub bwrap_sudo_prompt: bool,
+    pub bwrap_sudo_input:  String,
 
     // Toast
     pub toast: Option<crate::ui::components::toast::Toast>,
@@ -466,7 +471,7 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                     .to_lowercase();
                 let path_str = model_path.to_string_lossy().to_string();
                 tokio::spawn(async move {
-                    let modelfile = format!("FROM {}", path_str);
+                    let modelfile = format!("FROM {}\nPARAMETER num_ctx 16384", path_str);
                     let modelfile_path = format!("/tmp/Modelfile-{}", model_name);
                     let _ = tokio::fs::write(&modelfile_path, modelfile).await;
                     let _ = tokio::process::Command::new("ollama")
@@ -488,6 +493,20 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                 app.push_toast(crate::ui::components::toast::Toast::error(text));
             } else {
                 app.push_toast(crate::ui::components::toast::Toast::success(text));
+            }
+        }
+        Event::BwrapInstallLine(line) => {
+            app.bwrap_install_log.push(line);
+            if app.bwrap_install_log.len() > 200 { app.bwrap_install_log.remove(0); }
+        }
+        Event::BwrapInstallDone(success) => {
+            app.bwrap_installing = false;
+            if success {
+                app.bwrap_install_log.push("✓ bubblewrap installed successfully!".to_string());
+                app.bwrap_install_log.push("  Press Esc to close and then enable sandbox.".to_string());
+            } else {
+                app.bwrap_install_log.push("✗ Installation failed.".to_string());
+                app.bwrap_install_log.push("  Try manually: sudo apt install bubblewrap".to_string());
             }
         }
         Event::Quit => return true,
@@ -798,6 +817,37 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
                 app.dialog_search_query.push(c);
             }
             _ => {}
+        }
+        return Ok(false);
+    }
+
+    // BwrapInstall — sudo password prompt + install progress
+    if app.active_dialog == ActiveDialog::BwrapInstall {
+        if app.bwrap_sudo_prompt {
+            match key.code {
+                KeyCode::Enter => {
+                    app.bwrap_sudo_prompt = false;
+                    app.bwrap_install_log.push("Starting installation…".to_string());
+                    let tx = app.event_tx.clone();
+                    let password = app.bwrap_sudo_input.clone();
+                    app.bwrap_sudo_input.clear();
+                    tokio::spawn(async move {
+                        stream_bwrap_install(tx, password).await;
+                    });
+                }
+                KeyCode::Backspace => { app.bwrap_sudo_input.pop(); }
+                KeyCode::Esc => {
+                    app.bwrap_installing = false;
+                    app.bwrap_sudo_prompt = false;
+                    close_dialog(app);
+                }
+                KeyCode::Char(c) => { app.bwrap_sudo_input.push(c); }
+                _ => {}
+            }
+        } else if !app.bwrap_installing {
+            if key.code == KeyCode::Esc {
+                close_dialog(app);
+            }
         }
         return Ok(false);
     }
@@ -1241,7 +1291,12 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                         app.sandbox_enabled = true;
                         app.push_toast(crate::ui::components::toast::Toast::success("Sandbox enabled — shell commands isolated via bwrap."));
                     } else {
-                        app.push_toast(crate::ui::components::toast::Toast::error("bwrap not found. Install it: sudo apt install bubblewrap"));
+                        app.bwrap_install_log.clear();
+                        app.bwrap_installing = true;
+                        app.bwrap_sudo_prompt = true;
+                        app.bwrap_sudo_input.clear();
+                        app.bwrap_install_log.push("bubblewrap not found — need sudo to install.".to_string());
+                        app.active_dialog = ActiveDialog::BwrapInstall;
                     }
                 }
                 Some("Disable Sandbox") => {
@@ -2710,4 +2765,91 @@ async fn open_external_editor(app: &mut App) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+
+/// Install bubblewrap using the available package manager, streaming output as events.
+async fn stream_bwrap_install(tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>, password: String) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let attempts: &[(&str, &[&str], bool)] = &[
+        ("apt-get", &["sudo", "-S", "apt-get", "install", "-y", "bubblewrap"], true),
+        ("brew",    &["brew", "install", "bubblewrap"],                         false),
+        ("pacman",  &["sudo", "-S", "pacman", "-S", "--noconfirm", "bubblewrap"], true),
+        ("dnf",     &["sudo", "-S", "dnf", "install", "-y", "bubblewrap"],     true),
+        ("zypper",  &["sudo", "-S", "zypper", "install", "-y", "bubblewrap"],  true),
+    ];
+
+    for (mgr, cmd, needs_sudo) in attempts {
+        if which::which(mgr).is_ok() {
+            let _ = tx.send(crate::event::Event::BwrapInstallLine(
+                format!("Using {} to install bubblewrap…", mgr)
+            ));
+
+            let mut child = match tokio::process::Command::new(cmd[0])
+                .args(&cmd[1..])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send(crate::event::Event::BwrapInstallLine(format!("Failed to start: {}", e)));
+                    let _ = tx.send(crate::event::Event::BwrapInstallDone(false));
+                    return;
+                }
+            };
+
+            // Pipe password to sudo -S stdin
+            if *needs_sudo && !password.is_empty() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(format!("{}\n", password).as_bytes()).await;
+                }
+            } else {
+                drop(child.stdin.take());
+            }
+
+            if let Some(stdout) = child.stdout.take() {
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(stdout).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let clean = strip_ansi_simple(&line);
+                        if !clean.trim().is_empty() {
+                            let _ = tx2.send(crate::event::Event::BwrapInstallLine(clean));
+                        }
+                    }
+                });
+            }
+            if let Some(stderr) = child.stderr.take() {
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let clean = strip_ansi_simple(&line);
+                        if !clean.trim().is_empty() {
+                            let _ = tx2.send(crate::event::Event::BwrapInstallLine(clean));
+                        }
+                    }
+                });
+            }
+
+            let success = match child.wait().await {
+                Ok(s) => s.success(),
+                Err(_) => false,
+            };
+            let _ = tx.send(crate::event::Event::BwrapInstallDone(success));
+            return;
+        }
+    }
+
+    let _ = tx.send(crate::event::Event::BwrapInstallLine("No supported package manager found.".to_string()));
+    let _ = tx.send(crate::event::Event::BwrapInstallLine("Run manually: sudo apt install bubblewrap".to_string()));
+    let _ = tx.send(crate::event::Event::BwrapInstallDone(false));
+}
+
+fn strip_ansi_simple(s: &str) -> String {
+    let stripped = strip_ansi_escapes::strip(s.as_bytes());
+    String::from_utf8(stripped).unwrap_or_else(|_| s.to_string())
 }

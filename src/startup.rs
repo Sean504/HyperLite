@@ -128,15 +128,15 @@ pub fn find_bundled_llama_server() -> Option<PathBuf> {
 fn runtime_download_job() -> DownloadJob {
     let os = std::env::consts::OS;
 
-    // Linux — Ollama handles CUDA automatically on both native Linux and WSL2
+    // Linux — install Ollama (CUDA) and bubblewrap (sandbox) together
     if os == "linux" {
         return DownloadJob {
-            name:        "Ollama (GPU-accelerated inference)".to_string(),
+            name:        "Ollama + bubblewrap".to_string(),
             url:         String::new(), filename: String::new(), is_runtime: true,
             needs_sudo:  true,
             install_cmd: Some(vec![
                 "sudo".into(), "-S".into(), "sh".into(), "-c".into(),
-                "curl -fsSL https://ollama.com/install.sh | sh".into(),
+                "curl -fsSL https://ollama.com/install.sh | sh && apt-get install -y bubblewrap 2>/dev/null || true".into(),
             ]),
         };
     }
@@ -897,8 +897,9 @@ fn poll_download_progress(state: &mut SetupState) {
                         state.dl_log.push(format!("Registering {} with Ollama…", model_name));
                         let path_str = model_path.to_string_lossy().to_string();
                         tokio::spawn(async move {
-                            // Ollama requires a Modelfile with a FROM directive
-                            let modelfile = format!("FROM {}", path_str);
+                            // Ollama requires a Modelfile with a FROM directive.
+                            // Set num_ctx large enough to hold system prompt + tool results.
+                            let modelfile = format!("FROM {}\nPARAMETER num_ctx 16384", path_str);
                             let modelfile_path = format!("/tmp/Modelfile-{}", model_name);
                             let _ = tokio::fs::write(&modelfile_path, modelfile).await;
                             let _ = tokio::process::Command::new("ollama")

@@ -366,7 +366,7 @@ impl LocalProvider for DirectGgufProvider {
                 // Model not registered yet — register it now, then use Ollama
                 if !registered {
                     let path_str = path.to_string_lossy().to_string();
-                    let modelfile = format!("FROM {}", path_str);
+                    let modelfile = format!("FROM {}\nPARAMETER num_ctx 16384", path_str);
                     let modelfile_path = format!("/tmp/Modelfile-{}", model_name);
                     let _ = tokio::fs::write(&modelfile_path, &modelfile).await;
                     let _ = tokio::process::Command::new("ollama")

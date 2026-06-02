@@ -42,6 +42,10 @@ pub enum Event {
     // Background task result toast (is_error=true → error style)
     ToastMsg { text: String, is_error: bool },
 
+    // Bwrap install progress
+    BwrapInstallLine(String),
+    BwrapInstallDone(bool), // true = success
+
     // App lifecycle
     Quit,
 }

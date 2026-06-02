@@ -230,6 +230,10 @@ async fn run_app() -> anyhow::Result<()> {
         pending_permission: None,
         pending_diff:       None,
         sandbox_enabled:    false,
+        bwrap_install_log:  vec![],
+        bwrap_installing:   false,
+        bwrap_sudo_prompt:  false,
+        bwrap_sudo_input:   String::new(),
         toast:              None,
 
         http_client,
