@@ -104,10 +104,10 @@ fn render_tool_result_msg(text: &str, theme: &Theme, lines: &mut Vec<Line<'stati
             ("✓", Style::default().fg(theme.success))
         };
 
+        let friendly = friendly_tool_result(name, output, status == "error");
         lines.push(Line::from(vec![
             Span::styled(format!(" {} ", icon), status_style),
-            Span::styled(name.to_string(), Style::default().fg(theme.text_muted).add_modifier(Modifier::BOLD)),
-            Span::styled("  tool result", Style::default().fg(theme.text_dim)),
+            Span::styled(friendly, Style::default().fg(if status == "error" { theme.error } else { theme.text_muted })),
         ]));
 
         // Show output lines (capped to keep UI clean)
@@ -152,6 +152,46 @@ fn extract_tool_calls_for_display(text: &str) -> (String, Vec<String>) {
     (display.trim_end().to_string(), tools)
 }
 
+/// Convert raw tool name + output into a human-readable one-liner.
+fn friendly_tool_result(name: &str, output: &str, is_error: bool) -> String {
+    if is_error {
+        let first = output.lines().next().unwrap_or("failed").trim();
+        return format!("{} failed — {}", name, first);
+    }
+    // Extract a filename from the output or use the tool name to produce a plain-English label
+    let first_line = output.lines().next().unwrap_or("").trim();
+    match name {
+        "write_file" | "edit_file" => {
+            let path = first_line.split_whitespace().last().unwrap_or(first_line);
+            let file = std::path::Path::new(path).file_name()
+                .and_then(|n| n.to_str()).unwrap_or(path);
+            if name == "write_file" { format!("Created {}", file) }
+            else { format!("Edited {}", file) }
+        }
+        "delete_file"  => format!("Deleted {}", first_line),
+        "move_file"    => format!("Moved file"),
+        "create_dir"   => format!("Created directory"),
+        "shell"        => {
+            let preview = first_line.trim_start_matches("$ ").chars().take(40).collect::<String>();
+            format!("Ran: {}", preview)
+        }
+        "search"       => "Web search complete".to_string(),
+        "http_fetch"   => "Fetched URL".to_string(),
+        "read_file"    => "Read file".to_string(),
+        "batch_read"   => "Read files".to_string(),
+        "list_dir"     => "Listed directory".to_string(),
+        "tree"         => "Mapped structure".to_string(),
+        "grep"         => format!("Searched — {}", first_line.chars().take(40).collect::<String>()),
+        "glob"         => "Found files".to_string(),
+        "git_status"   => "Git status".to_string(),
+        "git_log"      => "Git log".to_string(),
+        "git_diff"     => "Git diff".to_string(),
+        "index_dir"    => "Indexed folder".to_string(),
+        "search_index" => "Searched index".to_string(),
+        _              => name.replace('_', " "),
+    }
+}
+
 fn extract_tag<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let open  = format!("<{}>", tag);
     let close = format!("</{}>", tag);
@@ -193,12 +233,18 @@ fn render_assistant(msg: &Message, theme: &Theme, width: u16, show_tool_details:
                         lines.push(Line::from(spans));
                     }
                 }
-                for tool_name in called_tools {
-                    lines.push(Line::from(vec![
-                        Span::styled("  ⚙ ", Style::default().fg(theme.text_dim)),
-                        Span::styled(tool_name, Style::default().fg(theme.text_muted).add_modifier(Modifier::BOLD)),
-                        Span::styled("  called…", Style::default().fg(theme.text_dim)),
-                    ]));
+                // Only show tool-calling indicators from text if the message has
+                // no Part::Tool entries — avoids the ⚙ ⚙ {} double render
+                let has_tool_parts = msg.parts.iter().any(|p| matches!(p, Part::Tool(_)));
+                if !has_tool_parts {
+                    for tool_name in called_tools {
+                        if tool_name == "{}" || tool_name.is_empty() { continue; }
+                        lines.push(Line::from(vec![
+                            Span::styled("  ⚙ ", Style::default().fg(theme.text_dim)),
+                            Span::styled(tool_name, Style::default().fg(theme.text_muted).add_modifier(Modifier::BOLD)),
+                            Span::styled("  called…", Style::default().fg(theme.text_dim)),
+                        ]));
+                    }
                 }
             }
 

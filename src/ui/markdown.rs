@@ -101,11 +101,11 @@ pub fn render(markdown: &str, theme: &Theme, width: u16) -> Text<'static> {
                 lines.push(Line::from(vec![
                     Span::styled(border_line, Style::default().fg(theme.border_hi)),
                 ]));
-                for code_line in code_buf.lines() {
-                    lines.push(Line::from(vec![
-                        Span::styled("  ", Style::default().fg(theme.border)),
-                        Span::styled(code_line.to_string(), Style::default().fg(theme.text)),
-                    ]));
+                let highlighted = crate::ui::syntax::highlight(&code_buf, &code_lang);
+                for hl_line in highlighted {
+                    let mut spans = vec![Span::styled("  ", Style::default())];
+                    spans.extend(hl_line.spans.into_iter());
+                    lines.push(Line::from(spans));
                 }
                 lines.push(Line::from(vec![
                     Span::styled(" ╰────", Style::default().fg(theme.border_hi)),
@@ -176,7 +176,23 @@ pub fn render(markdown: &str, theme: &Theme, width: u16) -> Text<'static> {
                     push_text!("  • ", Style::default().fg(theme.accent));
                 }
 
-                push_text!(text_str, style);
+                // Word-wrap prose text at the available width so ratatui never
+                // has to split mid-word. The 2-space indent is already accounted
+                // for by the caller, so we wrap at width directly.
+                if !code_inline && !list_item && width > 4 {
+                    let wrap_w = width.saturating_sub(4) as usize;
+                    let wrapped = word_wrap(&text_str, wrap_w);
+                    let mut iter = wrapped.into_iter();
+                    if let Some(first) = iter.next() {
+                        push_text!(first, style);
+                        for cont in iter {
+                            flush_line!();
+                            push_text!(cont, style);
+                        }
+                    }
+                } else {
+                    push_text!(text_str, style);
+                }
             }
 
             Event::Code(text) => {
@@ -202,4 +218,33 @@ pub fn render(markdown: &str, theme: &Theme, width: u16) -> Text<'static> {
     }
 
     Text::from(lines)
+}
+
+/// Word-wrap a string at `max_width` columns, returning one string per line.
+fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 { return vec![text.to_string()]; }
+    let mut lines = vec![];
+    let mut current = String::new();
+    let mut current_w = 0usize;
+
+    for word in text.split(' ') {
+        let word_w = unicode_width::UnicodeWidthStr::width(word);
+        if current.is_empty() {
+            current.push_str(word);
+            current_w = word_w;
+        } else if current_w + 1 + word_w <= max_width {
+            current.push(' ');
+            current.push_str(word);
+            current_w += 1 + word_w;
+        } else {
+            lines.push(current.clone());
+            current = word.to_string();
+            current_w = word_w;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() { lines.push(String::new()); }
+    lines
 }
