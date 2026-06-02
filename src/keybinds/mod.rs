@@ -104,7 +104,7 @@ impl Keybinds {
         k.bind(KeyCombo::alt(Char(']')),                   Action::NextChild,        "Alt+]");
 
         // Model/Agent
-        k.bind(KeyCombo::ctrl(Char('m')),                  Action::ModelPicker,      "Ctrl+M");
+        k.bind(KeyCombo::alt(Char('p')),                   Action::ModelPicker,      "Alt+P");
         k.bind(KeyCombo::alt(Char('m')),                   Action::CycleModelNext,   "Alt+M");
         k.bind(KeyCombo::new(Char('m'), KeyModifiers::ALT | KeyModifiers::SHIFT),
                                                            Action::CycleModelPrev,   "Alt+Shift+M");
@@ -112,9 +112,10 @@ impl Keybinds {
 
         // Display
         k.bind(KeyCombo::ctrl(Char('t')),                  Action::ToggleThinking,   "Ctrl+T");
-        k.bind(KeyCombo::ctrl(Char('\\')),                 Action::ToggleSidebar,    "Ctrl+\\");
-        k.bind(KeyCombo::ctrl(Char('h')),                  Action::ToggleToolDetails,"Ctrl+H");
+        k.bind(KeyCombo::alt(Char('\\')),                  Action::ToggleSidebar,    "Alt+\\");
+        k.bind(KeyCombo::alt(Char('h')),                   Action::ToggleToolDetails,"Alt+H");
         k.bind(KeyCombo::ctrl(Char('/')),                  Action::ToggleConceal,    "Ctrl+/");
+        k.bind(KeyCombo::ctrl(Char('h')),                  Action::Help,             "Ctrl+H");
 
         // Dialogs
         k.bind(KeyCombo::ctrl(Char('k')),                  Action::CommandPalette,   "Ctrl+K");
@@ -130,8 +131,7 @@ impl Keybinds {
         k.bind(KeyCombo::ctrl(Char('x')),                  Action::Quit,             "Ctrl+X");
         k.bind(KeyCombo::ctrl(Char('q')),                  Action::Quit,             "Ctrl+X");
         k.bind(KeyCombo::ctrl(Char('e')),                  Action::ExternalEditor,   "Ctrl+E");
-        k.bind(KeyCombo::new(Char('t'), KeyModifiers::CONTROL | KeyModifiers::SHIFT),
-                                                           Action::ThemeCycleNext,   "Ctrl+Shift+T");
+        k.bind(KeyCombo::alt(Char('t')),                   Action::ThemeCycleNext,   "Alt+T");
 
         k
     }

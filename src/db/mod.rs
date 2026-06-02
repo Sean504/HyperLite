@@ -172,6 +172,7 @@ pub fn load_messages(db: &Db, session_id: &str) -> Result<Vec<Message>> {
             id, session_id, role, parts, model,
             duration_ms: duration_ms.map(|d| d as u64),
             created_at,
+            hidden: false,
         })
     })
     .collect();

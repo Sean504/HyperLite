@@ -589,6 +589,8 @@ fn start_next_download(state: &mut SetupState) {
         }
         state.dl_status_msg = "installing…".to_string();
         state.dl_log.push(format!("Installing {}…", job.name));
+        state.dl_log.push("  This will take 2–5 minutes. Downloading and configuring the runtime.".to_string());
+        state.dl_log.push("  You can leave this running — HyperLite will launch when done.".to_string());
         let cmd = cmd.clone();
         let name = job.name.clone();
         let password = if job.needs_sudo { Some(state.sudo_input.clone()) } else { None };
@@ -616,7 +618,7 @@ fn start_next_download(state: &mut SetupState) {
                 tokio::spawn(async move {
                     let mut lines = BufReader::new(stdout).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
-                        let clean = line.trim().to_string();
+                        let clean = strip_ansi(line.trim());
                         if !clean.is_empty() {
                             let _ = tx2.send(DlEvent::Status(clean));
                         }
@@ -628,7 +630,7 @@ fn start_next_download(state: &mut SetupState) {
                 tokio::spawn(async move {
                     let mut lines = BufReader::new(stderr).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
-                        let clean = line.trim().to_string();
+                        let clean = strip_ansi(line.trim());
                         if !clean.is_empty() {
                             let _ = tx2.send(DlEvent::Status(clean));
                         }
@@ -1337,14 +1339,22 @@ fn render_downloading(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
             Span::styled(state.dl_status_msg.clone(), Style::default().fg(muted)),
         ])), chunks[1]);
 
-        let pct    = (state.dl_progress * 100.0).min(100.0) as u64;
-        let bar_w  = chunks[2].width.saturating_sub(10) as usize;
-        let filled = (bar_w as f64 * state.dl_progress).round() as usize;
-        let empty  = bar_w.saturating_sub(filled);
-        let bar    = format!("  [{}{}] {:>3}%", "█".repeat(filled), "░".repeat(empty), pct);
-        f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled(bar, Style::default().fg(teal)),
-        ])), chunks[2]);
+        // For install jobs (no byte progress), show a patience message instead of a 0% bar
+        if job.install_cmd.is_some() {
+            let pulse = if (state.splash_tick / 8) % 2 == 0 { orange } else { muted };
+            f.render_widget(Paragraph::new(Line::from(vec![
+                Span::styled("  ⏳  Installing in the background — this takes 2–5 min, please wait…", Style::default().fg(pulse)),
+            ])), chunks[2]);
+        } else {
+            let pct    = (state.dl_progress * 100.0).min(100.0) as u64;
+            let bar_w  = chunks[2].width.saturating_sub(10) as usize;
+            let filled = (bar_w as f64 * state.dl_progress).round() as usize;
+            let empty  = bar_w.saturating_sub(filled);
+            let bar    = format!("  [{}{}] {:>3}%", "█".repeat(filled), "░".repeat(empty), pct);
+            f.render_widget(Paragraph::new(Line::from(vec![
+                Span::styled(bar, Style::default().fg(teal)),
+            ])), chunks[2]);
+        }
 
         let fmt_bytes = |b: u64| -> String {
             if b >= 1_073_741_824 { format!("{:.2} GB", b as f64 / 1_073_741_824.0) }
@@ -1432,6 +1442,11 @@ fn render_launching(f: &mut ratatui::Frame, area: Rect) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn strip_ansi(s: &str) -> String {
+    let stripped = strip_ansi_escapes::strip(s.as_bytes());
+    String::from_utf8(stripped).unwrap_or_else(|_| s.to_string())
+}
 
 fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
     let popup_w = (r.width * percent_x / 100).min(r.width.saturating_sub(4));

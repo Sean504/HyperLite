@@ -50,6 +50,9 @@ pub struct Message {
     pub model:       Option<String>,
     pub duration_ms: Option<u64>,
     pub created_at:  i64,
+    /// Internal/automated messages — sent to the AI but hidden from the UI.
+    #[serde(default)]
+    pub hidden:      bool,
 }
 
 impl Message {
@@ -62,6 +65,7 @@ impl Message {
             model:       None,
             duration_ms: None,
             created_at:  chrono::Utc::now().timestamp(),
+            hidden:      false,
         }
     }
 
@@ -74,6 +78,7 @@ impl Message {
             model:       None,
             duration_ms: None,
             created_at:  chrono::Utc::now().timestamp(),
+            hidden:      false,
         }
     }
 

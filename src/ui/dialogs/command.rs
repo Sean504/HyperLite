@@ -34,7 +34,7 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
         // ── Agent ─────────────────────────────────────────────────────────────
         1 => vec![
             Command { label: "Switch Agent",          desc: "Change agent mode (General/Build/Plan/Custom)", shortcut: "Ctrl+A" },
-            Command { label: "Switch Model",          desc: "Choose a local model",                          shortcut: "Ctrl+M" },
+            Command { label: "Switch Model",          desc: "Choose a local model",                          shortcut: "Alt+P" },
             Command { label: "Cycle Model Next",      desc: "Next model in list",                            shortcut: "Alt+M" },
             Command { label: "Enable Git Context",    desc: "Inject git branch/status/diff into AI context", shortcut: "" },
             Command { label: "Disable Git Context",   desc: "Stop injecting git context into AI prompts",    shortcut: "" },
@@ -51,9 +51,9 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
         // ── Display ───────────────────────────────────────────────────────────
         2 => vec![
             Command { label: "Pick Theme",           desc: "Switch color theme",             shortcut: "" },
-            Command { label: "Toggle Sidebar",       desc: "Show/hide sidebar panel",        shortcut: "Ctrl+\\" },
+            Command { label: "Toggle Sidebar",       desc: "Show/hide sidebar panel",        shortcut: "Alt+\\" },
             Command { label: "Toggle Thinking",      desc: "Show/hide reasoning blocks",     shortcut: "Ctrl+T" },
-            Command { label: "Toggle Tool Details",  desc: "Expand/collapse tool output",    shortcut: "Ctrl+H" },
+            Command { label: "Toggle Tool Details",  desc: "Expand/collapse tool output",    shortcut: "Alt+H" },
             Command { label: "Toggle Conceal",       desc: "Hide/show code blocks",          shortcut: "Ctrl+/" },
         ],
         // ── Options ───────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
             Command { label: "Open in Editor",   desc: "Edit input in $EDITOR",       shortcut: "Ctrl+E" },
             Command { label: "Copy Last Response",desc: "Copy assistant message",     shortcut: "Ctrl+C" },
             Command { label: "Undo Last Message", desc: "Remove last exchange",       shortcut: "Ctrl+Z" },
-            Command { label: "Help",              desc: "Show keybinding reference",  shortcut: "?" },
+            Command { label: "Help",              desc: "Shortcuts, indexing, agents, tools reference",  shortcut: "Ctrl+H" },
             Command { label: "Quit",              desc: "Exit HyperLite",             shortcut: "Ctrl+X" },
         ],
         _ => vec![],

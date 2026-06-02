@@ -36,7 +36,7 @@ pub enum Event {
 
     // Model download progress (from model-picker Download tab)
     ModelDownloadProgress { model: String, bytes_done: u64, bytes_total: u64 },
-    ModelDownloadDone     { model: String },
+    ModelDownloadDone     { model: String, filename: String },
     ModelDownloadFailed   { model: String, error: String },
 
     // Background task result toast (is_error=true → error style)

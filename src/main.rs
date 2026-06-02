@@ -200,6 +200,7 @@ async fn run_app() -> anyhow::Result<()> {
         current_model,
         model_picker_tab:    0,
         command_palette_tab: 0,
+        help_tab:            0,
 
         hardware,
 

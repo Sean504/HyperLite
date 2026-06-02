@@ -87,6 +87,7 @@ pub struct App {
     pub current_model:     String,
     pub model_picker_tab:      usize,
     pub command_palette_tab:   usize,
+    pub help_tab:              usize,
 
     // Hardware
     pub hardware:       HardwareInfo,
@@ -373,6 +374,7 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                     model:       Some(app.current_model.clone()),
                     duration_ms: Some(duration_ms),
                     created_at:  chrono::Utc::now().timestamp(),
+                    hidden:      false,
                 };
                 let _ = crate::db::insert_message(&app.db, &msg);
                 app.messages.push(msg);
@@ -430,6 +432,7 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                     model:       Some(app.current_model.clone()),
                     duration_ms: None,
                     created_at:  chrono::Utc::now().timestamp(),
+                    hidden:      false,
                 };
                 let _ = crate::db::insert_message(&app.db, &msg);
                 app.messages.push(msg);
@@ -444,7 +447,7 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
             let instant = (bytes_done.saturating_sub(prev)) as f64 / 0.08;
             app.model_dl_speed_bps = app.model_dl_speed_bps * 0.85 + instant * 0.15;
         }
-        Event::ModelDownloadDone { model } => {
+        Event::ModelDownloadDone { model, filename } => {
             app.model_dl_active = None;
             app.model_dl_bytes_done  = 0;
             app.model_dl_bytes_total = 0;
@@ -453,6 +456,26 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
             app.push_toast(crate::ui::components::toast::Toast::success(
                 format!("Downloaded: {}", model)
             ));
+            // Register with Ollama if it's running — same logic as first-run setup.
+            // If Ollama isn't available this is a no-op and DirectGgufProvider handles it.
+            if which::which("ollama").is_ok() {
+                let model_path = crate::startup::models_dir().join(&filename);
+                let model_name = filename
+                    .trim_end_matches(".gguf")
+                    .replace(['.', ' '], "-")
+                    .to_lowercase();
+                let path_str = model_path.to_string_lossy().to_string();
+                tokio::spawn(async move {
+                    let modelfile = format!("FROM {}", path_str);
+                    let modelfile_path = format!("/tmp/Modelfile-{}", model_name);
+                    let _ = tokio::fs::write(&modelfile_path, modelfile).await;
+                    let _ = tokio::process::Command::new("ollama")
+                        .args(["create", &model_name, "-f", &modelfile_path])
+                        .output()
+                        .await;
+                    let _ = tokio::fs::remove_file(&modelfile_path).await;
+                });
+            }
         }
         Event::ModelDownloadFailed { model: _, error } => {
             app.model_dl_active = None;
@@ -591,7 +614,7 @@ async fn dispatch_action(app: &mut App, action: Action) -> anyhow::Result<bool> 
             app.command_palette_tab = 0;
             open_dialog(app, ActiveDialog::CommandPalette);
         }
-        Help           => open_dialog(app, ActiveDialog::Help),
+        Help           => { app.help_tab = 0; open_dialog(app, ActiveDialog::Help); }
         StatusView     => {}
         OpenFolder     => open_folder_browser(app),
         StashDraft     => stash_draft(app)?,
@@ -861,7 +884,15 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
                 app.command_palette_tab = (app.command_palette_tab + 1) % 4;
                 app.dialog_selected_idx = 0;
                 app.dialog_search_query.clear();
+            } else if app.active_dialog == ActiveDialog::Help {
+                app.help_tab = (app.help_tab + 1) % 4;
             }
+        }
+        KeyCode::Left if app.active_dialog == ActiveDialog::Help => {
+            app.help_tab = (app.help_tab + 3) % 4;
+        }
+        KeyCode::Right if app.active_dialog == ActiveDialog::Help => {
+            app.help_tab = (app.help_tab + 1) % 4;
         }
         // Ctrl+D = delete highlighted session in SessionList
         KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL
@@ -1915,7 +1946,8 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
     } else {
         "Please go ahead and call the appropriate tool to complete this task.".to_string()
     };
-    let enforcer_msg = Message::new_user(&app.session_id, &correction);
+    let mut enforcer_msg = Message::new_user(&app.session_id, &correction);
+    enforcer_msg.hidden = true;
     crate::db::insert_message(&app.db, &enforcer_msg)?;
     app.messages.push(enforcer_msg);
 
@@ -2044,10 +2076,10 @@ async fn apply_pending_diff(app: &mut App) -> anyhow::Result<()> {
     // sees it naturally when the tool loop re-fires — no fake user message
     append_diff_result_to_message(app, &diff.call.id, &diff.call.name, &tool_result_str, false);
 
-    // Continue tool loop if there are more calls, otherwise fire enforcer
-    if app.pending_tool_calls.is_empty() {
-        app.tool_enforcer_pending = true;
-    }
+    // If more tool calls remain, the tool loop will pick them up.
+    // Do NOT fire the enforcer after a diff approval — the model already
+    // called the tool, the write happened, continuation is natural.
+    app.tool_enforcer_pending = false;
     app.streaming = false;
     Ok(())
 }
@@ -2506,7 +2538,7 @@ fn start_model_download(app: &mut App, filename: String, url: String, display: S
             return;
         }
 
-        let _ = tx.send(Event::ModelDownloadDone { model: display });
+        let _ = tx.send(Event::ModelDownloadDone { model: display, filename: filename.clone() });
     });
 }
 

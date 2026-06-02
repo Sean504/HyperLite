@@ -67,8 +67,28 @@ impl DirectGgufProvider {
     }
 
     /// Scan all configured directories for model files.
+    /// If Ollama is running, skips GGUFs that are already registered there
+    /// to avoid showing duplicates in the model picker.
     pub fn scan_model_files(&self) -> Vec<LocalModel> {
         let mut models = vec![];
+
+        // Fetch Ollama's registered model names once (blocking, best-effort)
+        let ollama_names: std::collections::HashSet<String> = if which::which("ollama").is_ok() {
+            std::process::Command::new("ollama")
+                .arg("list")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|text| {
+                    text.lines().skip(1) // skip header
+                        .filter_map(|l| l.split_whitespace().next())
+                        .map(|name| name.trim_end_matches(":latest").to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            std::collections::HashSet::new()
+        };
 
         // Always include the canonical HyperLite models dir, even if it wasn't
         // present when this provider was created.
@@ -114,6 +134,12 @@ impl DirectGgufProvider {
                 let stem = path.file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or(filename.clone());
+
+                // Skip if Ollama already has this model registered
+                let ollama_name = stem.replace(['.', ' '], "-").to_lowercase();
+                if ollama_names.contains(&ollama_name) {
+                    continue;
+                }
 
                 let size = path.metadata().ok().map(|m| m.len());
 
@@ -307,8 +333,9 @@ impl LocalProvider for DirectGgufProvider {
             anyhow::bail!("Model file not found: {}", path.display());
         }
 
-        // If Ollama is running, route through it — it handles CUDA automatically.
+        // If Ollama is running, try to route through it — it handles CUDA automatically.
         // Derive the Ollama model name from the GGUF filename (same as registration).
+        // If Ollama returns 404 (model not yet registered) fall through to llama-server.
         if which::which("ollama").is_ok() {
             let ollama_base = "http://127.0.0.1:11434";
             let health_ok = self.client
@@ -325,9 +352,33 @@ impl LocalProvider for DirectGgufProvider {
                         .to_lowercase())
                     .unwrap_or_default();
 
+                // Verify the model is actually registered before committing to Ollama
+                let registered = async {
+                    let resp = self.client
+                        .get(format!("{}/api/tags", ollama_base))
+                        .send().await.ok()?;
+                    let j: serde_json::Value = resp.json().await.ok()?;
+                    j["models"].as_array().map(|arr|
+                        arr.iter().any(|m| m["name"].as_str().unwrap_or("").starts_with(&model_name))
+                    )
+                }.await.unwrap_or(false);
+
+                // Model not registered yet — register it now, then use Ollama
+                if !registered {
+                    let path_str = path.to_string_lossy().to_string();
+                    let modelfile = format!("FROM {}", path_str);
+                    let modelfile_path = format!("/tmp/Modelfile-{}", model_name);
+                    let _ = tokio::fs::write(&modelfile_path, &modelfile).await;
+                    let _ = tokio::process::Command::new("ollama")
+                        .args(["create", &model_name, "-f", &modelfile_path])
+                        .output()
+                        .await;
+                    let _ = tokio::fs::remove_file(&modelfile_path).await;
+                }
+
                 return openai_compat::stream_chat(
                     &self.client,
-                    &format!("{}/v1", ollama_base),
+                    ollama_base,
                     BackendKind::Ollama,
                     messages,
                     &model_name,

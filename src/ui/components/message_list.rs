@@ -20,7 +20,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Build all display lines from messages
     let mut all_lines: Vec<Line<'static>> = vec![];
 
-    for msg in &app.messages {
+    for msg in app.messages.iter().filter(|m| !m.hidden) {
         let msg_lines = render_message(msg, &app.theme, width, app.show_tool_details);
         all_lines.extend(msg_lines);
     }

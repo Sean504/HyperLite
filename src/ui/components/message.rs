@@ -232,36 +232,45 @@ fn render_assistant(msg: &Message, theme: &Theme, width: u16, show_tool_details:
             }
 
             Part::Diff(dp) => {
-                // Header: file path + state
-                let state_label = match dp.state {
-                    DiffProposalState::Pending   => " ·  Enter → apply   Esc → discard",
-                    DiffProposalState::Approved  => " ·  ✓ applied",
-                    DiffProposalState::Discarded => " ·  ✗ discarded",
-                };
                 let header_color = match dp.state {
                     DiffProposalState::Pending   => theme.accent,
                     DiffProposalState::Approved  => theme.success,
                     DiffProposalState::Discarded => theme.text_dim,
                 };
+
+                // File path header — no confirmation hint yet, show it AFTER the diff
                 lines.push(Line::from(vec![
                     Span::styled(" ± ", Style::default().fg(header_color)),
                     Span::styled(dp.file_path.clone(), Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-                    Span::styled(state_label.to_string(), Style::default().fg(header_color)),
                 ]));
 
-                // Diff lines
+                // Diff lines — with background highlighting so they're readable
                 for dl in &dp.diff_lines {
-                    let (prefix, color) = match dl.kind {
-                        DiffLineKind::Added   => ("+ ", theme.success),
-                        DiffLineKind::Removed => ("- ", theme.error),
-                        DiffLineKind::Context => ("  ", theme.text_dim),
-                        DiffLineKind::Header  => ("  ", theme.text_dim),
+                    let (prefix, fg, bg) = match dl.kind {
+                        DiffLineKind::Added   => ("+ ", theme.diff_add_fg, Some(theme.diff_add_bg)),
+                        DiffLineKind::Removed => ("- ", theme.diff_del_fg, Some(theme.diff_del_bg)),
+                        DiffLineKind::Context => ("  ", theme.text_dim,    None),
+                        DiffLineKind::Header  => ("  ", theme.text_dim,    None),
                     };
                     let content = dl.content.clone();
+                    let style = match bg {
+                        Some(b) => Style::default().fg(fg).bg(b),
+                        None    => Style::default().fg(fg),
+                    };
                     lines.push(Line::from(vec![
-                        Span::styled(format!("  {}{}", prefix, content), Style::default().fg(color)),
+                        Span::styled(format!("  {}{}", prefix, content), style),
                     ]));
                 }
+
+                // Confirmation hint AFTER the diff so the user reads it last
+                let state_label = match dp.state {
+                    DiffProposalState::Pending   => " ·  Enter → apply   Esc → discard",
+                    DiffProposalState::Approved  => " ·  ✓ applied",
+                    DiffProposalState::Discarded => " ·  ✗ discarded",
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(state_label.to_string(), Style::default().fg(header_color).add_modifier(Modifier::BOLD)),
+                ]));
                 lines.push(Line::default());
             }
         }
