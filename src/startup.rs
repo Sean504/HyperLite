@@ -1044,60 +1044,157 @@ const LOGO: &[&str] = &[
 ];
 
 fn render_splash(f: &mut ratatui::Frame, area: Rect, state: &SetupState) {
-    let purple = ratatui::style::Color::Rgb(189, 147, 249);
-    let teal   = ratatui::style::Color::Rgb(0,   245, 212);
-    let green  = ratatui::style::Color::Rgb(80,  250, 123);
-    let dim    = ratatui::style::Color::Rgb(55,  55,  90);
-    let pulse  = if (state.splash_tick / 6) % 2 == 0 { purple } else { teal };
+    let purple  = ratatui::style::Color::Rgb(189, 147, 249);
+    let teal    = ratatui::style::Color::Rgb(0,   245, 212);
+    let green   = ratatui::style::Color::Rgb(80,  250, 123);
+    let white   = ratatui::style::Color::Rgb(224, 223, 255);
+    let dim     = ratatui::style::Color::Rgb(55,  55,  90);
+    let bg      = ratatui::style::Color::Rgb(8,   8,   18);
 
-    let outer = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(pulse))
-        .style(Style::default().bg(ratatui::style::Color::Rgb(8, 8, 18)));
-    let inner = outer.inner(area);
-    f.render_widget(outer, area);
+    // Animation phases driven by splash_tick (80ms per tick):
+    //   0–4   : noise — all logo chars show random glyphs (static/interference)
+    //   5–22  : decode — chars lock in left-to-right, each flashes white on lock frame
+    //   23+   : settled — normal splash with pulsing border and blinking ENTER
+    let tick = state.splash_tick as usize;
+
+    // Characters used during the noise/decode phase
+    const NOISE: &[char] = &['▓','░','▒','█','╬','╪','┼','╫','◆','◇','▪','▫','■','□','▤','▥','▦'];
+
+    // Deterministic "random" from tick + position — no RNG needed
+    let pseudo_rand = |seed: usize| -> usize {
+        let s = seed.wrapping_mul(2654435761).wrapping_add(tick.wrapping_mul(1234567));
+        (s ^ (s >> 16)) % NOISE.len()
+    };
 
     let logo_w = LOGO.iter().map(|l| unicode_width::UnicodeWidthStr::width(*l) as u16).max().unwrap_or(74);
     let logo_h = LOGO.len() as u16 + 6;
-    let logo_y = inner.y + inner.height.saturating_sub(logo_h) / 2;
-    let logo_x = inner.x + inner.width.saturating_sub(logo_w) / 2;
+    let logo_y = if tick >= 23 {
+        let inner_h = area.height.saturating_sub(2);
+        area.y + 1 + inner_h.saturating_sub(logo_h) / 2
+    } else {
+        area.y + 1 + area.height.saturating_sub(2 + logo_h) / 2
+    };
+    let logo_x = area.x + 1 + area.width.saturating_sub(2 + logo_w) / 2;
 
-    for (i, line) in LOGO.iter().enumerate() {
-        let color = if i % 2 == 0 { purple } else { teal };
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(*line, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-            ])),
-            Rect { x: logo_x, y: logo_y + i as u16, width: logo_w.min(inner.width), height: 1 },
-        );
+    // Border — only show after decode finishes
+    if tick >= 23 {
+        let pulse = if (tick / 6) % 2 == 0 { purple } else { teal };
+        let outer = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(pulse))
+            .style(Style::default().bg(bg));
+        f.render_widget(outer, area);
+    } else {
+        let outer = Block::default()
+            .style(Style::default().bg(bg));
+        f.render_widget(outer, area);
     }
 
-    let sub_y = logo_y + LOGO.len() as u16 + 1;
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("terminal-native  ·  local-only  ·  blazing fast", Style::default().fg(teal)),
-        ])).alignment(ratatui::layout::Alignment::Center),
-        Rect { x: inner.x, y: sub_y, width: inner.width, height: 1 },
-    );
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(dim)),
-        ])).alignment(ratatui::layout::Alignment::Center),
-        Rect { x: inner.x, y: sub_y + 1, width: inner.width, height: 1 },
-    );
+    // Total characters across all logo lines — used to schedule lock times
+    let total_chars: usize = LOGO.iter().map(|l| l.chars().count()).sum();
+    // How many chars lock per tick during decode phase (spread ticks 5–22 = 18 ticks)
+    let chars_per_tick = (total_chars as f32 / 18.0).ceil() as usize;
+    // How many chars should be locked by now
+    let locked_count = if tick < 5 {
+        0
+    } else {
+        ((tick - 5) * chars_per_tick).min(total_chars)
+    };
 
-    let blink_on = (state.splash_tick / 7) % 2 == 0;
-    let enter_text = if blink_on { "  ▸  PRESS  ENTER  TO  LAUNCH  ◂  " } else { "" };
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(enter_text, Style::default().fg(green).add_modifier(Modifier::BOLD)),
-        ])).alignment(ratatui::layout::Alignment::Center),
-        Rect { x: inner.x, y: sub_y + 3, width: inner.width, height: 1 },
-    );
-    f.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(" Ctrl+Q quit ", Style::default().fg(dim))])),
-        Rect { x: inner.x, y: inner.y + inner.height - 1, width: 16, height: 1 },
-    );
+    // Render logo lines
+    let mut char_idx = 0usize;
+    for (line_i, logo_line) in LOGO.iter().enumerate() {
+        let final_color = if line_i % 2 == 0 { purple } else { teal };
+        let chars: Vec<char> = logo_line.chars().collect();
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(chars.len());
+
+        for (col_i, &ch) in chars.iter().enumerate() {
+            let this_idx = char_idx + col_i;
+
+            if tick < 5 {
+                // Noise phase: random glyph in teal
+                let noise_ch = NOISE[pseudo_rand(this_idx * 7 + col_i * 3)];
+                spans.push(Span::styled(
+                    noise_ch.to_string(),
+                    Style::default().fg(teal).add_modifier(Modifier::BOLD),
+                ));
+            } else if this_idx < locked_count {
+                // Locked: flash white on the exact tick it locked, then final color
+                let lock_tick = 5 + this_idx / chars_per_tick;
+                let color = if tick == lock_tick { white } else { final_color };
+                let modifier = if tick == lock_tick {
+                    Modifier::BOLD
+                } else {
+                    Modifier::BOLD
+                };
+                spans.push(Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(color).add_modifier(modifier),
+                ));
+            } else {
+                // Not yet locked: still noise
+                let noise_ch = NOISE[pseudo_rand(this_idx * 13 + tick * 5)];
+                spans.push(Span::styled(
+                    noise_ch.to_string(),
+                    Style::default().fg(teal).add_modifier(Modifier::BOLD),
+                ));
+            }
+        }
+        char_idx += chars.len();
+
+        let y = logo_y + line_i as u16;
+        if y < area.y + area.height {
+            f.render_widget(
+                Paragraph::new(Line::from(spans)),
+                Rect { x: logo_x, y, width: logo_w.min(area.width.saturating_sub(2)), height: 1 },
+            );
+        }
+    }
+
+    // Tagline + version + ENTER — only after decode settles
+    if tick >= 23 {
+        let inner_x = area.x + 1;
+        let inner_w = area.width.saturating_sub(2);
+        let sub_y   = logo_y + LOGO.len() as u16 + 1;
+
+        // Tagline types in character by character
+        let tagline   = "terminal-native  ·  local-only  ·  blazing fast";
+        let chars_shown = ((tick - 23) * 3).min(tagline.chars().count());
+        let visible: String = tagline.chars().take(chars_shown).collect();
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(visible, Style::default().fg(teal)),
+            ])).alignment(ratatui::layout::Alignment::Center),
+            Rect { x: inner_x, y: sub_y, width: inner_w, height: 1 },
+        );
+
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(dim)),
+            ])).alignment(ratatui::layout::Alignment::Center),
+            Rect { x: inner_x, y: sub_y + 1, width: inner_w, height: 1 },
+        );
+
+        // ENTER prompt appears after tagline finishes — always visible for first 6 ticks
+        // then starts blinking so it's never missed on first appearance
+        let tagline_done_tick = 23 + (tagline.chars().count() + 2) / 3;
+        if tick >= tagline_done_tick {
+            let ticks_since = tick - tagline_done_tick;
+            let blink_on = ticks_since < 6 || (tick / 7) % 2 == 0;
+            let enter_text = if blink_on { "  ▸  PRESS  ENTER  TO  LAUNCH  ◂  " } else { "" };
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(enter_text, Style::default().fg(green).add_modifier(Modifier::BOLD)),
+                ])).alignment(ratatui::layout::Alignment::Center),
+                Rect { x: inner_x, y: sub_y + 3, width: inner_w, height: 1 },
+            );
+        }
+
+        f.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(" Ctrl+Q quit ", Style::default().fg(dim))])),
+            Rect { x: inner_x, y: area.y + area.height - 2, width: 16, height: 1 },
+        );
+    }
 }
 
 // ── Model selection ───────────────────────────────────────────────────────────
