@@ -4,12 +4,19 @@ pub mod markdown;
 pub mod syntax;
 pub mod components;
 pub mod dialogs;
+pub mod pentest;
 
 use ratatui::Frame;
 use crate::app::App;
 
 /// Main render entry point — called every frame.
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    // Pen test mode takes over the entire screen
+    if app.pentest_mode {
+        pentest::draw(frame, app);
+        return;
+    }
+
     let area = frame.area();
     let lay  = layout::compute(area, app);
 

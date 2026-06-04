@@ -47,6 +47,11 @@ pub enum ActiveDialog {
     BwrapInstall,  // bubblewrap install progress dialog
     MemoryInput,   // text input for saving a new memory fact
     GitToken,      // PAT setup guide + masked token input triggered by auth failures
+    PenTestAuth,        // full-screen authorization gate (typewriter animation + AUTHORIZED input)
+    PenTestPreflight,   // tool inventory check + workflow availability
+    PenTestToolSelector, // interactive selection of missing tools to install
+    PenTestInstall,     // streaming install progress + sudo prompt
+    PenTestSetup,       // engagement setup form (target, depth, exclusions)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,6 +145,47 @@ pub struct App {
     // Git token setup — triggered when push/pull returns [AUTH_REQUIRED:host]
     pub git_token_input: String,
     pub git_token_host:  String,
+
+    // Pen test mode — active engagement UI
+    pub pentest_mode:        bool,
+    pub pentest_engagement:  Option<crate::pentest::EngagementSpec>,
+    pub pentest_phase:       crate::pentest::EngagementPhase,
+    pub pentest_hosts:       Vec<crate::pentest::PentestHost>,
+    pub pentest_selected_host: usize,
+    pub pentest_scan_progress: crate::pentest::ScanProgress,
+    pub pentest_raw_output:  Vec<String>,
+    pub pentest_raw_tab:     bool,   // false = structured view, true = raw output
+    pub pentest_evidence:    Vec<String>,
+
+    // Pen test mode — setup form
+    pub pentest_setup_target:     String,
+    pub pentest_setup_exclusions: String,
+    pub pentest_setup_field:      usize,
+    pub pentest_setup_depth:      crate::pentest::Depth,
+
+    // Pen test mode — auth gate
+    pub pentest_auth_phase:  crate::pentest::AuthPhase,
+    pub pentest_auth_tick:   u8,
+    pub pentest_auth_input:  String,
+    pub pentest_auth_flash:  u8,
+
+    // Pen test mode — environment + inventory
+    pub pentest_env:          Option<crate::pentest::EnvironmentReport>,
+    pub pentest_inventory:    crate::pentest::ToolInventory,
+    pub pentest_inv_complete: bool,
+
+    // Pen test mode — tool selector
+    pub pentest_selector_items:  Vec<(String, bool)>,  // (tool_name, selected)
+    pub pentest_selector_cursor: usize,
+    pub pentest_install_sudo_prompt: bool,
+    pub pentest_install_sudo_input:  String,
+    // Golang dependency confirmation (shown when Go-dependent tools selected + Go missing)
+    pub pentest_golang_confirm:  bool,
+    pub pentest_golang_tools:    Vec<String>,  // tools that need Go
+
+    // Pen test mode — install progress
+    pub pentest_install_log:  Vec<String>,
+    pub pentest_installing:   bool,
 
     // Toast
     pub toast: Option<crate::ui::components::toast::Toast>,
@@ -245,6 +291,44 @@ impl App {
         self.cursor_blink_tick = self.cursor_blink_tick.wrapping_add(1);
         if self.cursor_blink_tick % 5 == 0 {
             self.cursor_blink_on = !self.cursor_blink_on;
+        }
+
+        // Auth gate typewriter animation
+        if self.active_dialog == ActiveDialog::PenTestAuth {
+            use crate::pentest::{AuthPhase, AUTH_CONTENT_LINES, AUTH_LINES_PER_TICK};
+            match &self.pentest_auth_phase {
+                AuthPhase::BlackOut => {
+                    self.pentest_auth_tick += 1;
+                    if self.pentest_auth_tick >= 2 {
+                        self.pentest_auth_phase = AuthPhase::Revealing;
+                        self.pentest_auth_tick = 0;
+                    }
+                }
+                AuthPhase::Revealing => {
+                    self.pentest_auth_tick += 1;
+                    let revealed = (self.pentest_auth_tick as u16 * AUTH_LINES_PER_TICK as u16)
+                        .min(AUTH_CONTENT_LINES as u16) as u8;
+                    if revealed >= AUTH_CONTENT_LINES {
+                        self.pentest_auth_phase = AuthPhase::AwaitInput;
+                    }
+                }
+                AuthPhase::FlashWrong | AuthPhase::FlashCorrect => {
+                    self.pentest_auth_flash = self.pentest_auth_flash.saturating_sub(1);
+                    if self.pentest_auth_flash == 0 {
+                        if self.pentest_auth_phase == AuthPhase::FlashCorrect {
+                            // Transition to pre-flight
+                            self.pentest_auth_phase = AuthPhase::AwaitInput;
+                            self.pentest_auth_input.clear();
+                            open_dialog(self, ActiveDialog::PenTestPreflight);
+                            launch_pentest_inventory(self);
+                        } else {
+                            self.pentest_auth_phase = AuthPhase::AwaitInput;
+                            self.pentest_auth_input.clear();
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -500,6 +584,78 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                 app.push_toast(crate::ui::components::toast::Toast::success(text));
             }
         }
+        Event::PenTestHostDiscovered(ip) => {
+            // Ping sweep confirmed host live — add placeholder entry
+            if !app.pentest_hosts.iter().any(|h| h.ip == ip) {
+                app.pentest_hosts.push(crate::pentest::PentestHost {
+                    ip,
+                    hostname: None,
+                    ports: vec![],
+                    os_guess: None,
+                });
+            }
+        }
+        Event::PenTestHostComplete(host) => {
+            // Service scan completed for a host — update or insert
+            if let Some(existing) = app.pentest_hosts.iter_mut().find(|h| h.ip == host.ip) {
+                *existing = *host;
+            } else {
+                app.pentest_hosts.push(*host);
+            }
+        }
+        Event::PenTestScanProgress { percent, found, speed, eta, command } => {
+            app.pentest_scan_progress.percent     = percent;
+            app.pentest_scan_progress.hosts_found = found;
+            app.pentest_scan_progress.speed       = speed;
+            app.pentest_scan_progress.eta         = eta;
+            if !command.is_empty() {
+                app.pentest_scan_progress.command = command;
+            }
+            app.pentest_scan_progress.running = true;
+        }
+        Event::PenTestRawLine(line) => {
+            app.pentest_raw_output.push(line);
+            if app.pentest_raw_output.len() > 2000 { app.pentest_raw_output.remove(0); }
+        }
+        Event::PenTestEvidenceLine { timestamp, text } => {
+            app.pentest_evidence.push(format!("[{}] {}", timestamp, text));
+            if app.pentest_evidence.len() > 500 { app.pentest_evidence.remove(0); }
+        }
+        Event::PenTestReconComplete => {
+            app.pentest_scan_progress.running  = false;
+            app.pentest_scan_progress.percent  = 100;
+            app.pentest_phase = crate::pentest::EngagementPhase::Complete;
+            app.push_toast(crate::ui::components::toast::Toast::success(
+                format!("Recon complete — {} hosts found", app.pentest_hosts.len())
+            ));
+        }
+        Event::PenTestToolChecked { name, available, path } => {
+            let status = if available {
+                crate::pentest::ToolStatus::Available { path: path.unwrap_or_default() }
+            } else {
+                crate::pentest::ToolStatus::Missing
+            };
+            app.pentest_inventory.statuses.insert(name, status);
+        }
+        Event::PenTestInventoryComplete => {
+            app.pentest_inv_complete = true;
+        }
+        Event::PenTestInstallLine(line) => {
+            app.pentest_install_log.push(line);
+            if app.pentest_install_log.len() > 400 { app.pentest_install_log.remove(0); }
+        }
+        Event::PenTestBatchInstallDone(success) => {
+            app.pentest_installing = false;
+            let msg = if success {
+                "Install complete — rechecking inventory…"
+            } else {
+                "Some installs failed — see log for details"
+            };
+            app.push_toast(crate::ui::components::toast::Toast::info(msg));
+            // Go back to pre-flight and rerun the inventory
+            open_dialog(app, ActiveDialog::PenTestPreflight);
+            launch_pentest_inventory(app);
+        }
         Event::BwrapInstallLine(line) => {
             app.bwrap_install_log.push(line);
             if app.bwrap_install_log.len() > 200 { app.bwrap_install_log.remove(0); }
@@ -648,6 +804,8 @@ async fn dispatch_action(app: &mut App, action: Action) -> anyhow::Result<bool> 
         ThemePicker    => open_dialog(app, ActiveDialog::ThemePicker),
         ThemeCycleNext => cycle_theme(app, 1),
         ThemeCyclePrev => cycle_theme(app, -1),
+
+        PenTestMode    => enter_pentest_mode(app),
 
         Interrupt => {
             if app.is_streaming() {
@@ -897,6 +1055,291 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
             }
             KeyCode::Char(c) => { app.git_token_input.push(c); }
             _ => {}
+        }
+        return Ok(false);
+    }
+
+    // PenTestAuth — full-screen authorization gate
+    if app.active_dialog == ActiveDialog::PenTestAuth {
+        use crate::pentest::AuthPhase;
+        // Only accept input once the content has fully revealed
+        if app.pentest_auth_phase == AuthPhase::AwaitInput {
+            match key.code {
+                KeyCode::Backspace => { app.pentest_auth_input.pop(); }
+                KeyCode::Esc => {
+                    app.pentest_auth_input.clear();
+                    app.pentest_auth_phase = AuthPhase::BlackOut;
+                    app.pentest_auth_tick  = 0;
+                    close_dialog(app);
+                }
+                KeyCode::Enter => {
+                    let input = app.pentest_auth_input.trim().to_uppercase();
+                    if input == "AUTHORIZED" {
+                        app.pentest_auth_phase = AuthPhase::FlashCorrect;
+                        app.pentest_auth_flash = 4;
+                    } else {
+                        app.pentest_auth_phase = AuthPhase::FlashWrong;
+                        app.pentest_auth_flash = 3;
+                    }
+                }
+                KeyCode::Char(c) if app.pentest_auth_input.len() < 20 => {
+                    app.pentest_auth_input.push(c);
+                }
+                _ => {}
+            }
+        } else if app.pentest_auth_phase == AuthPhase::BlackOut
+               || app.pentest_auth_phase == AuthPhase::Revealing {
+            // Allow Esc to cancel even during animation
+            if key.code == KeyCode::Esc {
+                app.pentest_auth_phase = AuthPhase::BlackOut;
+                app.pentest_auth_tick  = 0;
+                close_dialog(app);
+            }
+        }
+        return Ok(false);
+    }
+
+    // PenTestPreflight — tool inventory + workflow availability
+    if app.active_dialog == ActiveDialog::PenTestPreflight {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.pentest_inv_complete = false;
+                app.pentest_inventory    = crate::pentest::ToolInventory::default();
+                close_dialog(app);
+            }
+            // Enter or i — if tools are missing open the selector, otherwise go to setup
+            KeyCode::Enter | KeyCode::Char('i') if app.pentest_inv_complete => {
+                let missing = app.pentest_inventory.missing_tools();
+                if missing.is_empty() {
+                    // All tools ready — open engagement setup form
+                    app.pentest_setup_target.clear();
+                    app.pentest_setup_exclusions.clear();
+                    app.pentest_setup_field = 0;
+                    app.pentest_setup_depth = crate::pentest::Depth::SafeActive;
+                    open_dialog(app, ActiveDialog::PenTestSetup);
+                } else {
+                    app.pentest_selector_items = missing.iter()
+                        .map(|&n| (n.to_string(), true))
+                        .collect();
+                    app.pentest_selector_cursor = 0;
+                    app.pentest_install_sudo_prompt = false;
+                    app.pentest_install_sudo_input.clear();
+                    open_dialog(app, ActiveDialog::PenTestToolSelector);
+                }
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    // PenTestToolSelector — interactive selection of tools to install
+    if app.active_dialog == ActiveDialog::PenTestToolSelector {
+        // Golang dependency confirmation (shown before sudo prompt)
+        if app.pentest_golang_confirm {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    // Add golang-go to the selected install list
+                    let already = app.pentest_selector_items.iter().any(|(n, _)| n == "golang-go");
+                    if !already {
+                        app.pentest_selector_items.insert(0, ("golang-go".to_string(), true));
+                    }
+                    app.pentest_golang_confirm = false;
+                    app.pentest_install_sudo_prompt = true;
+                    app.pentest_install_sudo_input.clear();
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    // Skip Go-dependent tools — deselect them
+                    let skip: Vec<String> = app.pentest_golang_tools.drain(..).collect();
+                    for (name, sel) in &mut app.pentest_selector_items {
+                        if skip.contains(name) { *sel = false; }
+                    }
+                    app.pentest_golang_confirm = false;
+                    // Only show sudo if something is still selected
+                    let any = app.pentest_selector_items.iter().any(|(_, s)| *s);
+                    if any {
+                        app.pentest_install_sudo_prompt = true;
+                        app.pentest_install_sudo_input.clear();
+                    }
+                }
+                KeyCode::Esc => {
+                    app.pentest_golang_confirm = false;
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
+        if app.pentest_install_sudo_prompt {
+            match key.code {
+                KeyCode::Backspace => { app.pentest_install_sudo_input.pop(); }
+                KeyCode::Esc => {
+                    app.pentest_install_sudo_prompt = false;
+                    app.pentest_install_sudo_input.clear();
+                }
+                KeyCode::Enter if !app.pentest_install_sudo_input.is_empty() => {
+                    let selected: Vec<String> = app.pentest_selector_items.iter()
+                        .filter(|(_, sel)| *sel)
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    if selected.is_empty() {
+                        app.pentest_install_sudo_prompt = false;
+                        return Ok(false);
+                    }
+                    let password = app.pentest_install_sudo_input.clone();
+                    let env = app.pentest_env.clone().unwrap();
+                    app.pentest_install_sudo_input.clear();
+                    app.pentest_install_sudo_prompt = false;
+                    app.pentest_install_log.clear();
+                    app.pentest_installing = true;
+                    open_dialog(app, ActiveDialog::PenTestInstall);
+                    let tx = app.event_tx.clone();
+                    tokio::spawn(async move {
+                        stream_pentest_install(tx, password, selected, env).await;
+                    });
+                }
+                KeyCode::Char(c) => { app.pentest_install_sudo_input.push(c); }
+                _ => {}
+            }
+        } else {
+            match key.code {
+                KeyCode::Esc => {
+                    open_dialog(app, ActiveDialog::PenTestPreflight);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if app.pentest_selector_cursor > 0 {
+                        app.pentest_selector_cursor -= 1;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let len = app.pentest_selector_items.len();
+                    if app.pentest_selector_cursor + 1 < len {
+                        app.pentest_selector_cursor += 1;
+                    }
+                }
+                KeyCode::Char(' ') => {
+                    let idx = app.pentest_selector_cursor;
+                    if let Some(item) = app.pentest_selector_items.get_mut(idx) {
+                        item.1 = !item.1;
+                    }
+                }
+                KeyCode::Char('a') => {
+                    for item in &mut app.pentest_selector_items { item.1 = true; }
+                }
+                KeyCode::Char('n') => {
+                    for item in &mut app.pentest_selector_items { item.1 = false; }
+                }
+                KeyCode::Enter => {
+                    let any_selected = app.pentest_selector_items.iter().any(|(_, s)| *s);
+                    if !any_selected { return Ok(false); }
+
+                    // Check if any selected tools need Go and Go isn't installed
+                    let go_missing = which::which("go").is_err();
+                    if go_missing {
+                        let go_tools: Vec<String> = app.pentest_selector_items.iter()
+                            .filter(|(_, sel)| *sel)
+                            .filter_map(|(name, _)| {
+                                crate::pentest::tool_def(name)
+                                    .filter(|d| d.go_pkg.is_some())
+                                    .map(|_| name.clone())
+                            })
+                            .collect();
+                        if !go_tools.is_empty() {
+                            app.pentest_golang_tools   = go_tools;
+                            app.pentest_golang_confirm = true;
+                            return Ok(false);
+                        }
+                    }
+                    app.pentest_install_sudo_prompt = true;
+                    app.pentest_install_sudo_input.clear();
+                }
+                _ => {}
+            }
+        }
+        return Ok(false);
+    }
+
+    // PenTestInstall — streaming install log
+    if app.active_dialog == ActiveDialog::PenTestInstall {
+        if !app.pentest_installing && key.code == KeyCode::Esc {
+            open_dialog(app, ActiveDialog::PenTestPreflight);
+        }
+        return Ok(false);
+    }
+
+    // PenTestSetup — engagement target entry form
+    if app.active_dialog == ActiveDialog::PenTestSetup {
+        match key.code {
+            KeyCode::Esc => { open_dialog(app, ActiveDialog::PenTestPreflight); }
+            KeyCode::Tab | KeyCode::Down => {
+                app.pentest_setup_field = (app.pentest_setup_field + 1) % 3;
+            }
+            KeyCode::Up => {
+                app.pentest_setup_field = app.pentest_setup_field.saturating_sub(1);
+            }
+            KeyCode::Left if app.pentest_setup_field == 2 => {
+                app.pentest_setup_depth = match app.pentest_setup_depth {
+                    crate::pentest::Depth::SafeActive => crate::pentest::Depth::ReconOnly,
+                    crate::pentest::Depth::Full       => crate::pentest::Depth::SafeActive,
+                    _                                 => crate::pentest::Depth::ReconOnly,
+                };
+            }
+            KeyCode::Right if app.pentest_setup_field == 2 => {
+                app.pentest_setup_depth = match app.pentest_setup_depth {
+                    crate::pentest::Depth::ReconOnly  => crate::pentest::Depth::SafeActive,
+                    crate::pentest::Depth::SafeActive => crate::pentest::Depth::Full,
+                    _                                 => crate::pentest::Depth::Full,
+                };
+            }
+            KeyCode::Backspace => {
+                match app.pentest_setup_field {
+                    0 => { app.pentest_setup_target.pop(); }
+                    1 => { app.pentest_setup_exclusions.pop(); }
+                    _ => {}
+                }
+            }
+            KeyCode::Enter => {
+                if app.pentest_setup_target.trim().is_empty() {
+                    app.push_toast(crate::ui::components::toast::Toast::error("Target required"));
+                    return Ok(false);
+                }
+                start_engagement(app);
+            }
+            KeyCode::Char(c) => {
+                match app.pentest_setup_field {
+                    0 => app.pentest_setup_target.push(c),
+                    1 => app.pentest_setup_exclusions.push(c),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    // Pen test mode TUI navigation (when fully in pen test mode, no dialog)
+    if app.pentest_mode && app.active_dialog == ActiveDialog::None {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.pentest_selected_host = app.pentest_selected_host.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let max = app.pentest_hosts.len().saturating_sub(1);
+                if app.pentest_selected_host < max {
+                    app.pentest_selected_host += 1;
+                }
+            }
+            KeyCode::Tab => {
+                app.pentest_raw_tab = !app.pentest_raw_tab;
+            }
+            // Ctrl+P exits pen test mode back to chat
+            _ => if let Some(action) = app.keybinds.resolve(&key).cloned() {
+                if action == crate::keybinds::Action::PenTestMode {
+                    app.pentest_mode = false;
+                    app.push_toast(crate::ui::components::toast::Toast::info("Exited pen test mode"));
+                } else if action == crate::keybinds::Action::Quit {
+                    return Ok(true);
+                }
+            }
         }
         return Ok(false);
     }
@@ -2926,7 +3369,345 @@ async fn stream_bwrap_install(tx: tokio::sync::mpsc::UnboundedSender<crate::even
     let _ = tx.send(crate::event::Event::BwrapInstallDone(false));
 }
 
+async fn stream_pentest_install(
+    tx:       tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    password: String,
+    tools:    Vec<String>,
+    env:      crate::pentest::EnvironmentReport,
+) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use crate::pentest::{tool_def, PackageManager, EnvironmentType};
+
+    let is_kali = matches!(env.env_type, EnvironmentType::NativeKali | EnvironmentType::KaliWSL2);
+
+    let mgr = match &env.package_manager {
+        Some(PackageManager::Apt)    => "apt",
+        Some(PackageManager::Dnf)    => "dnf",
+        Some(PackageManager::Yum)    => "yum",
+        Some(PackageManager::Pacman) => "pacman",
+        _ => "apt",
+    };
+
+    // Classify each selected tool into an install strategy
+    enum Strategy {
+        AptPkg(String),
+        Pip3Pkg(String),
+        GoInstall(String),
+        Special(String),
+        ManualOnly(String),  // can't auto-install, show instructions
+    }
+
+    let mut steps: Vec<(String, Strategy)> = vec![];
+
+    for name in &tools {
+        // golang-go is a synthetic dependency, not in ALL_TOOLS
+        if name == "golang-go" {
+            steps.push((name.clone(), Strategy::AptPkg("golang-go".to_string())));
+            continue;
+        }
+
+        let def = match tool_def(name) {
+            Some(d) => d,
+            None    => { steps.push((name.clone(), Strategy::ManualOnly(format!("unknown tool: {}", name)))); continue; }
+        };
+
+        // Determine the apt package name for this distro/package manager
+        let apt_pkg = match &env.package_manager {
+            Some(PackageManager::Apt)    => def.apt,
+            Some(PackageManager::Dnf)    => def.dnf,
+            Some(PackageManager::Yum)    => def.dnf,
+            Some(PackageManager::Pacman) => def.pacman,
+            _ => def.apt,
+        };
+
+        let can_use_apt = apt_pkg.is_some() && (is_kali || !def.apt_kali_only);
+
+        if can_use_apt {
+            steps.push((name.clone(), Strategy::AptPkg(apt_pkg.unwrap().to_string())));
+        } else if let Some(go) = def.go_pkg {
+            steps.push((name.clone(), Strategy::GoInstall(go.to_string())));
+        } else if let Some(pip) = def.pip3 {
+            steps.push((name.clone(), Strategy::Pip3Pkg(pip.to_string())));
+        } else if let Some(special) = def.special {
+            steps.push((name.clone(), Strategy::Special(special.to_string())));
+        } else if def.apt_kali_only && apt_pkg.is_some() {
+            // Kali-only tool with no Ubuntu alternative
+            let msg = format!(
+                "{} is only available in Kali repos. On Ubuntu, add the Kali repo or install manually.",
+                name
+            );
+            steps.push((name.clone(), Strategy::ManualOnly(msg)));
+        } else {
+            steps.push((name.clone(), Strategy::ManualOnly(format!("no install method found for {} on this system", name))));
+        }
+    }
+
+    let mut any_success = false;
+
+    // Run each step individually — failures are isolated
+    for (name, strategy) in &steps {
+        match strategy {
+            Strategy::ManualOnly(msg) => {
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(format!("⚠  {}", msg)));
+            }
+            Strategy::AptPkg(pkg) => {
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    format!("installing {}…  (sudo {} install -y {})", name, mgr, pkg)
+                ));
+                let ok = run_sudo_command(
+                    &tx, &password,
+                    &["sudo", "-S", mgr, "install", "-y", pkg]
+                ).await;
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    if ok { format!("✓  {}", name) } else { format!("✗  {} — install failed (check log)", name) }
+                ));
+                if ok {
+                    any_success = true;
+                    // After golang installs, add ~/go/bin to PATH for subsequent go install calls
+                    if name == "golang-go" {
+                        let home = std::env::var("HOME").unwrap_or_default();
+                        let go_bin = format!("{}/go/bin", home);
+                        let current = std::env::var("PATH").unwrap_or_default();
+                        if !current.contains(&go_bin) {
+                            std::env::set_var("PATH", format!("{}:{}", go_bin, current));
+                        }
+                    }
+                }
+            }
+            Strategy::Pip3Pkg(pkg) => {
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    format!("installing {} via pip3…", name)
+                ));
+                let ok = run_command(&tx, &["pip3", "install", "--user", pkg]).await;
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    if ok { format!("✓  {}", name) } else { format!("✗  {} pip3 install failed", name) }
+                ));
+                if ok { any_success = true; }
+            }
+            Strategy::GoInstall(pkg) => {
+                // Check go is available
+                let go_path = which::which("go").is_ok();
+                if !go_path {
+                    let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                        format!("⚠  {} requires Go — install Go first: sudo apt install golang", name)
+                    ));
+                    continue;
+                }
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    format!("installing {} via go install…", name)
+                ));
+                let ok = run_command(&tx, &["go", "install", "-v", pkg]).await;
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    if ok { format!("✓  {} (may need to add ~/go/bin to PATH)", name) }
+                    else  { format!("✗  {} go install failed", name) }
+                ));
+                if ok { any_success = true; }
+            }
+            Strategy::Special(cmd) => {
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    format!("installing {} via special method…", name)
+                ));
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    format!("$ {}", cmd)
+                ));
+                let parts: Vec<&str> = cmd.split_whitespace().collect();
+                if parts.is_empty() { continue; }
+
+                // Special commands may need sudo — pipe password if sudo is first token
+                let ok = if parts[0] == "sudo" {
+                    run_sudo_command(&tx, &password, &parts).await
+                } else {
+                    run_command(&tx, &parts).await
+                };
+                let _ = tx.send(crate::event::Event::PenTestInstallLine(
+                    if ok { format!("✓  {}", name) } else { format!("✗  {} failed — see log", name) }
+                ));
+                if ok { any_success = true; }
+            }
+        }
+    }
+
+    let _ = tx.send(crate::event::Event::PenTestBatchInstallDone(any_success));
+}
+
+/// Run a non-sudo command, stream output, return success.
+async fn run_command(
+    tx:   &tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    args: &[&str],
+) -> bool {
+    use tokio::io::AsyncBufReadExt;
+    if args.is_empty() { return false; }
+
+    let mut child = match tokio::process::Command::new(args[0])
+        .args(&args[1..])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(crate::event::Event::PenTestInstallLine(format!("  error: {}", e)));
+            return false;
+        }
+    };
+
+    stream_child_output(&mut child, tx).await;
+    child.wait().await.map(|s| s.success()).unwrap_or(false)
+}
+
+/// Run a sudo command with password piped to stdin.
+async fn run_sudo_command(
+    tx:       &tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    password: &str,
+    args:     &[&str],
+) -> bool {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    if args.is_empty() { return false; }
+
+    let mut child = match tokio::process::Command::new(args[0])
+        .args(&args[1..])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(crate::event::Event::PenTestInstallLine(format!("  error: {}", e)));
+            return false;
+        }
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(format!("{}\n", password).as_bytes()).await;
+    }
+
+    stream_child_output(&mut child, tx).await;
+    child.wait().await.map(|s| s.success()).unwrap_or(false)
+}
+
+async fn stream_child_output(
+    child: &mut tokio::process::Child,
+    tx:    &tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+) {
+    use tokio::io::AsyncBufReadExt;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    if let Some(out) = stdout {
+        let t = tx.clone();
+        tokio::spawn(async move {
+            let mut lines = tokio::io::BufReader::new(out).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let clean = strip_ansi_simple(&line);
+                if !clean.trim().is_empty() {
+                    let _ = t.send(crate::event::Event::PenTestInstallLine(format!("  {}", clean)));
+                }
+            }
+        });
+    }
+    if let Some(err) = stderr {
+        let t = tx.clone();
+        tokio::spawn(async move {
+            let mut lines = tokio::io::BufReader::new(err).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let clean = strip_ansi_simple(&line);
+                if !clean.trim().is_empty() {
+                    let _ = t.send(crate::event::Event::PenTestInstallLine(format!("  {}", clean)));
+                }
+            }
+        });
+    }
+}
+
 fn strip_ansi_simple(s: &str) -> String {
     let stripped = strip_ansi_escapes::strip(s.as_bytes());
     String::from_utf8(stripped).unwrap_or_else(|_| s.to_string())
+}
+
+// ── Pen test mode ─────────────────────────────────────────────────────────────
+
+fn start_engagement(app: &mut App) {
+    let exclusions: Vec<String> = app.pentest_setup_exclusions
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut spec = crate::pentest::EngagementSpec::default();
+    spec.scope      = vec![app.pentest_setup_target.trim().to_string()];
+    spec.exclusions = exclusions;
+    spec.depth      = app.pentest_setup_depth.clone();
+
+    let _ = spec.save();
+
+    app.pentest_hosts.clear();
+    app.pentest_raw_output.clear();
+    app.pentest_evidence.clear();
+    app.pentest_selected_host  = 0;
+    app.pentest_raw_tab        = false;
+    app.pentest_phase          = crate::pentest::EngagementPhase::Recon;
+    app.pentest_scan_progress  = crate::pentest::ScanProgress {
+        command: format!("nmap on {}", spec.scope.first().cloned().unwrap_or_default()),
+        running: true,
+        ..Default::default()
+    };
+
+    let spec_clone = spec.clone();
+    let env        = app.pentest_env.clone().unwrap_or_else(|| crate::pentest::env::detect());
+    let tx         = app.event_tx.clone();
+
+    app.pentest_engagement = Some(spec);
+    close_dialog(app);
+    app.pentest_mode = true;
+
+    tokio::spawn(async move {
+        crate::pentest::runner::run_recon(tx, spec_clone, env).await;
+    });
+}
+
+fn enter_pentest_mode(app: &mut App) {
+    // Detect environment immediately (fast — reads /proc/version + /etc/os-release)
+    let env = crate::pentest::env::detect();
+    app.pentest_env = Some(env);
+
+    // Reset auth gate state and open it
+    app.pentest_auth_phase = crate::pentest::AuthPhase::BlackOut;
+    app.pentest_auth_tick  = 0;
+    app.pentest_auth_input.clear();
+    app.pentest_auth_flash = 0;
+    open_dialog(app, ActiveDialog::PenTestAuth);
+}
+
+fn launch_pentest_inventory(app: &mut App) {
+    let env = match &app.pentest_env {
+        Some(e) => e.clone(),
+        None    => return,
+    };
+    let tx = app.event_tx.clone();
+
+    // Mark all tools as "checking" so the pre-flight renders immediately
+    app.pentest_inventory    = crate::pentest::ToolInventory::new_checking();
+    app.pentest_inv_complete = false;
+
+    tokio::spawn(async move {
+        // Run checks in a blocking thread — just file existence, ~2ms per tool
+        let results = tokio::task::spawn_blocking(move || {
+            crate::pentest::ALL_TOOLS.iter().map(|def| {
+                let status = crate::pentest::check_tool(def, &env);
+                (def.name.to_string(), status)
+            }).collect::<Vec<_>>()
+        }).await.unwrap_or_default();
+
+        for (name, status) in results {
+            let available = status.is_available();
+            let path = if let crate::pentest::ToolStatus::Available { path: p } = &status {
+                Some(p.clone())
+            } else {
+                None
+            };
+            let _ = tx.send(crate::event::Event::PenTestToolChecked { name, available, path });
+        }
+        let _ = tx.send(crate::event::Event::PenTestInventoryComplete);
+    });
 }

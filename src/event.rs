@@ -46,6 +46,21 @@ pub enum Event {
     BwrapInstallLine(String),
     BwrapInstallDone(bool), // true = success
 
+    // Pen test mode — tool inventory (one event per tool so UI updates live)
+    PenTestToolChecked { name: String, available: bool, path: Option<String> },
+    PenTestInventoryComplete,
+    // Pen test mode — tool install progress (same streaming pattern as bwrap)
+    PenTestInstallLine(String),
+    PenTestBatchInstallDone(bool),  // true = all steps succeeded
+
+    // Pen test mode — recon phase runtime
+    PenTestHostDiscovered(String),    // IP confirmed live (ping sweep)
+    PenTestHostComplete(Box<crate::pentest::PentestHost>), // full host with ports
+    PenTestScanProgress { percent: u8, found: u32, speed: String, eta: String, command: String },
+    PenTestRawLine(String),           // raw tool output for the raw-output tab
+    PenTestEvidenceLine { timestamp: String, text: String },
+    PenTestReconComplete,
+
     // App lifecycle
     Quit,
 }

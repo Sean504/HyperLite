@@ -8,6 +8,7 @@ mod event;
 mod hardware;
 mod keybinds;
 mod models;
+mod pentest;
 mod project;
 mod providers;
 mod memory;
@@ -246,6 +247,36 @@ async fn run_app() -> anyhow::Result<()> {
         bwrap_sudo_input:   String::new(),
         git_token_input:    String::new(),
         git_token_host:     String::new(),
+
+        pentest_mode:        false,
+        pentest_engagement:  None,
+        pentest_phase:       crate::pentest::EngagementPhase::Idle,
+        pentest_hosts:       vec![],
+        pentest_selected_host: 0,
+        pentest_scan_progress: crate::pentest::ScanProgress::default(),
+        pentest_raw_output:  vec![],
+        pentest_raw_tab:     false,
+        pentest_evidence:    vec![],
+        pentest_setup_target:     String::new(),
+        pentest_setup_exclusions: String::new(),
+        pentest_setup_field:      0,
+        pentest_setup_depth:      crate::pentest::Depth::SafeActive,
+        pentest_auth_phase:   crate::pentest::AuthPhase::BlackOut,
+        pentest_auth_tick:    0,
+        pentest_auth_input:   String::new(),
+        pentest_auth_flash:   0,
+        pentest_env:          None,
+        pentest_inventory:    crate::pentest::ToolInventory::default(),
+        pentest_inv_complete: false,
+        pentest_selector_items:      vec![],
+        pentest_selector_cursor:     0,
+        pentest_install_sudo_prompt: false,
+        pentest_install_sudo_input:  String::new(),
+        pentest_golang_confirm:      false,
+        pentest_golang_tools:        vec![],
+        pentest_install_log:  vec![],
+        pentest_installing:   false,
+
         toast:              None,
 
         http_client,

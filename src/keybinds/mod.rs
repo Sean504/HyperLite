@@ -29,6 +29,8 @@ pub enum Action {
     // App
     Quit, Interrupt, ExternalEditor,
     ThemePicker, ThemeCycleNext, ThemeCyclePrev,
+    // Modes
+    PenTestMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -132,6 +134,9 @@ impl Keybinds {
         k.bind(KeyCombo::ctrl(Char('q')),                  Action::Quit,             "Ctrl+X");
         k.bind(KeyCombo::ctrl(Char('e')),                  Action::ExternalEditor,   "Ctrl+E");
         k.bind(KeyCombo::alt(Char('t')),                   Action::ThemeCycleNext,   "Alt+T");
+
+        // Modes
+        k.bind(KeyCombo::ctrl(Char('p')),                  Action::PenTestMode,      "Ctrl+P");
 
         k
     }
@@ -242,5 +247,6 @@ fn action_description(action: &Action) -> &'static str {
         ThemePicker      => "Pick theme",
         ThemeCycleNext   => "Next theme",
         ThemeCyclePrev   => "Prev theme",
+        PenTestMode      => "Pen test mode",
     }
 }
