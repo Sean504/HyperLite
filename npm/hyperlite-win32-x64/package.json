@@ -1,6 +1,6 @@
 {
   "name": "@hyperlite-ai/win32-x64",
-  "version": "0.3.5",
+  "version": "0.3.7",
   "description": "HyperLite native binary for Windows x64 — terminal-native local AI with CUDA GPU acceleration",
   "keywords": ["local-ai", "local-llm", "windows", "terminal-ai", "cuda", "gpu-inference", "offline-ai", "gguf", "llama-cpp", "tui", "cli", "powershell", "windows-terminal"],
   "homepage": "https://hyperlite.org",
