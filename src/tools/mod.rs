@@ -23,6 +23,7 @@ pub mod shell;
 pub mod http;
 pub mod rag;
 pub mod git;
+pub mod docs;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -173,6 +174,42 @@ pub static ALL_TOOLS: &[ToolDef] = &[
         requires_permission: false,
     },
     ToolDef {
+        name:        "git_add",
+        description: "Stage files for commit. Pass a file path or '.' to stage everything.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"File or directory to stage (default: . for all changes)"}}}"#,
+        requires_permission: true,
+    },
+    ToolDef {
+        name:        "git_commit",
+        description: "Create a commit with a message. Stages must already be set with git_add.",
+        parameters:  r#"{"type":"object","properties":{"message":{"type":"string","description":"Commit message"}},"required":["message"]}"#,
+        requires_permission: true,
+    },
+    ToolDef {
+        name:        "git_push",
+        description: "Push commits to a remote repository. If authentication fails, a token setup dialog will open automatically.",
+        parameters:  r#"{"type":"object","properties":{"remote":{"type":"string","description":"Remote name (default: origin)"},"branch":{"type":"string","description":"Branch to push (default: current branch)"}}}"#,
+        requires_permission: true,
+    },
+    ToolDef {
+        name:        "git_pull",
+        description: "Pull latest changes from a remote repository. If authentication fails, a token setup dialog will open automatically.",
+        parameters:  r#"{"type":"object","properties":{"remote":{"type":"string","description":"Remote name (default: origin)"},"branch":{"type":"string","description":"Branch to pull (default: current branch)"}}}"#,
+        requires_permission: true,
+    },
+    ToolDef {
+        name:        "git_branch",
+        description: "Manage branches: list all branches, create a new branch, switch to a branch, or delete a branch.",
+        parameters:  r#"{"type":"object","properties":{"action":{"type":"string","enum":["list","create","switch","delete"],"description":"What to do (default: list)"},"name":{"type":"string","description":"Branch name (required for create, switch, delete)"}}}"#,
+        requires_permission: true,
+    },
+    ToolDef {
+        name:        "git_stash",
+        description: "Stash or restore work in progress. Use push to save, pop to restore, list to see stashes, drop to delete.",
+        parameters:  r#"{"type":"object","properties":{"action":{"type":"string","enum":["push","pop","list","drop"],"description":"Stash operation (default: push)"},"message":{"type":"string","description":"Optional label for the stash (push only)"}}}"#,
+        requires_permission: true,
+    },
+    ToolDef {
         name:        "index_dir",
         description: "Index the current working directory for semantic search (RAG). Only indexes the active project folder. Skips .git, node_modules, target, and binary files automatically.",
         parameters:  r#"{"type":"object","properties":{"extensions":{"type":"array","items":{"type":"string"},"description":"File extensions to include, e.g. [\"rs\",\"toml\"]. Default: all common code and text files."}}}"#,
@@ -194,6 +231,49 @@ pub static ALL_TOOLS: &[ToolDef] = &[
         name:        "list_indexes",
         description: "List all available RAG indexes with their file and chunk counts.",
         parameters:  r#"{"type":"object","properties":{}}"#,
+        requires_permission: false,
+    },
+    // ── Document & productivity tools ─────────────────────────────────────────
+    ToolDef {
+        name:        "read_pdf",
+        description: "Extract and read text from a PDF file. Works for documents, contracts, research papers, manuals. Pass max_chars to control how much to return (default 8000).",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the PDF file"},"max_chars":{"type":"integer","description":"Maximum characters to return (default 8000)"}},"required":["path"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "analyze_csv",
+        description: "Parse a CSV or spreadsheet file. Returns column names, row count, numeric statistics (sum, mean, min, max), and a preview of the first 5 rows. Great for bank exports, expense tracking, any tabular data.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the CSV file"}},"required":["path"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "scrape_page",
+        description: "Fetch a web page and extract clean readable text — strips navigation, ads, scripts. Better than http_fetch for articles, product pages, documentation. Optionally specify what to focus on.",
+        parameters:  r#"{"type":"object","properties":{"url":{"type":"string","description":"URL to scrape"},"focus":{"type":"string","description":"What to focus on extracting (e.g. 'price', 'article text', 'product specs')"}},"required":["url"]}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "read_notes",
+        description: "Read a Markdown notes or TODO file. Parses task checkboxes (- [ ] / - [x]) and shows a summary. Defaults to TODO.md in the working directory.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to notes file (default: TODO.md)"}}}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "write_note",
+        description: "Write or append to a Markdown notes file. Use append=true to add to an existing file without overwriting. Defaults to TODO.md.",
+        parameters:  r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to notes file (default: TODO.md)"},"content":{"type":"string","description":"Content to write"},"append":{"type":"boolean","description":"Append to file instead of overwriting (default false)"}},"required":["content"]}"#,
+        requires_permission: true,
+    },
+    ToolDef {
+        name:        "system_status",
+        description: "Get system health: CPU usage, RAM used/free, top processes by memory, and disk usage for all mounted drives.",
+        parameters:  r#"{"type":"object","properties":{}}"#,
+        requires_permission: false,
+    },
+    ToolDef {
+        name:        "check_ports",
+        description: "Check which ports are in use vs free on localhost. Useful for finding port conflicts before starting a server. Checks common ports by default.",
+        parameters:  r#"{"type":"object","properties":{"ports":{"type":"array","items":{"type":"integer"},"description":"List of ports to check (default: 80,443,3000,5000,8000,8080,11434,18080)"}}}"#,
         requires_permission: false,
     },
 ];
@@ -935,11 +1015,24 @@ pub async fn execute(
         "git_log"      => git::log(&call.parameters, cwd),
         "git_diff"     => git::diff(&call.parameters, cwd),
         "git_blame"    => git::blame(&call.parameters, cwd),
+        "git_add"      => git::add(&call.parameters, cwd),
+        "git_commit"   => git::commit(&call.parameters, cwd),
+        "git_push"     => tokio::task::block_in_place(|| git::push(&call.parameters, cwd)),
+        "git_pull"     => tokio::task::block_in_place(|| git::pull(&call.parameters, cwd)),
+        "git_branch"   => git::branch_op(&call.parameters, cwd),
+        "git_stash"    => git::stash(&call.parameters, cwd),
         "index_dir"    => tokio::task::block_in_place(|| rag::index_dir(&call.parameters, cwd, db)),
         "search_index" => tokio::task::block_in_place(|| rag::search_index(&call.parameters, db)),
         "clear_index"  => tokio::task::block_in_place(|| rag::clear_index(&call.parameters, db)),
-        "list_indexes" => tokio::task::block_in_place(|| rag::list_indexes(db)),
-        _              => Err(anyhow::anyhow!("Unknown tool: {}", call.name)),
+        "list_indexes"  => tokio::task::block_in_place(|| rag::list_indexes(db)),
+        "read_pdf"      => tokio::task::block_in_place(|| docs::read_pdf(&call.parameters, cwd)),
+        "analyze_csv"   => tokio::task::block_in_place(|| docs::analyze_csv(&call.parameters, cwd)),
+        "scrape_page"   => docs::scrape_page(&call.parameters, client).await,
+        "read_notes"    => tokio::task::block_in_place(|| docs::read_notes(&call.parameters, cwd)),
+        "write_note"    => tokio::task::block_in_place(|| docs::write_note(&call.parameters, cwd)),
+        "system_status" => tokio::task::block_in_place(|| docs::system_status(&call.parameters)),
+        "check_ports"   => tokio::task::block_in_place(|| docs::check_ports(&call.parameters)),
+        _               => Err(anyhow::anyhow!("Unknown tool: {}", call.name)),
     };
 
     match result {

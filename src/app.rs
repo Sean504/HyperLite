@@ -46,6 +46,7 @@ pub enum ActiveDialog {
     RagSearch,     // text input for searching an index manually
     BwrapInstall,  // bubblewrap install progress dialog
     MemoryInput,   // text input for saving a new memory fact
+    GitToken,      // PAT setup guide + masked token input triggered by auth failures
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,6 +136,10 @@ pub struct App {
     pub bwrap_installing:  bool,
     pub bwrap_sudo_prompt: bool,
     pub bwrap_sudo_input:  String,
+
+    // Git token setup — triggered when push/pull returns [AUTH_REQUIRED:host]
+    pub git_token_input: String,
+    pub git_token_host:  String,
 
     // Toast
     pub toast: Option<crate::ui::components::toast::Toast>,
@@ -852,6 +857,50 @@ async fn handle_dialog_key(app: &mut App, key: crossterm::event::KeyEvent) -> an
         return Ok(false);
     }
 
+    // GitToken — PAT setup guide + masked input; triggered by auth failures in git_push/git_pull
+    if app.active_dialog == ActiveDialog::GitToken {
+        match key.code {
+            KeyCode::Backspace => { app.git_token_input.pop(); }
+            KeyCode::Esc => {
+                app.git_token_input.clear();
+                close_dialog(app);
+            }
+            KeyCode::Enter if !app.git_token_input.is_empty() => {
+                let token = app.git_token_input.clone();
+                let host  = app.git_token_host.clone();
+                app.git_token_input.clear();
+                close_dialog(app);
+
+                // Store synchronously — fast, and must complete before the retry reaches git
+                let store_result = tokio::task::block_in_place(|| {
+                    crate::tools::git::store_git_token(&host, &token)
+                });
+
+                match store_result {
+                    Ok(_) => {
+                        app.push_toast(crate::ui::components::toast::Toast::success(
+                            "Git token saved — retrying now…"
+                        ));
+                        // Inject a synthetic user message so the model retries automatically
+                        let retry_text = "Token saved. Please retry the git operation that just failed.";
+                        let mut retry_ta = tui_textarea::TextArea::default();
+                        retry_ta.insert_str(retry_text);
+                        app.textarea = retry_ta;
+                        submit_message(app).await?;
+                    }
+                    Err(e) => {
+                        app.push_toast(crate::ui::components::toast::Toast::error(
+                            format!("Failed to save token: {}", e)
+                        ));
+                    }
+                }
+            }
+            KeyCode::Char(c) => { app.git_token_input.push(c); }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // IndexConfirm — ask user whether to index the just-opened folder
     if app.active_dialog == ActiveDialog::IndexConfirm {
         match key.code {
@@ -1220,14 +1269,31 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                     .map(|m| m.id.clone())
                     .collect();
                 if let Some(id) = filtered.get(app.dialog_selected_idx) {
-                    let name = app.available_models.iter().find(|m| &m.id == id)
+                    let id = id.clone();
+                    let name = app.available_models.iter().find(|m| m.id == id)
                         .map(|m| m.name.clone()).unwrap_or_default();
-                    app.current_model = id.clone();
-                    app.push_toast(crate::ui::components::toast::Toast::success(
-                        format!("Model: {}", name)
-                    ));
+                    close_dialog(app);
+
+                    let is_same = app.current_model == id;
+                    let has_history = !app.messages.is_empty();
+
+                    if !is_same && has_history {
+                        // Compact with the old model before switching so the new model
+                        // gets a clean summary rather than a raw history it may not understand.
+                        app.push_toast(crate::ui::components::toast::Toast::info(
+                            format!("Compacting session before switching to {}…", name)
+                        ));
+                        compact_session(app).await?;
+                    }
+                    app.current_model = id;
+                    if !is_same {
+                        app.push_toast(crate::ui::components::toast::Toast::success(
+                            format!("Switched to {}", name)
+                        ));
+                    }
+                } else {
+                    close_dialog(app);
                 }
-                close_dialog(app);
             }
         }
         ActiveDialog::ThemePicker => {
@@ -1774,6 +1840,17 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         } else {
             ("ok", result.output)
         };
+
+        // Detect git auth failures and open the token setup dialog
+        if content.contains("[AUTH_REQUIRED:") {
+            if let Some(start) = content.find("[AUTH_REQUIRED:") {
+                let rest = &content[start + "[AUTH_REQUIRED:".len()..];
+                if let Some(end) = rest.find(']') {
+                    app.git_token_host = rest[..end].to_string();
+                    open_dialog(app, ActiveDialog::GitToken);
+                }
+            }
+        }
 
         // If make_plan was called, store the steps in app state
         if call.name == "make_plan" && status == "ok" {

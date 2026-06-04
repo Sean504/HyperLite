@@ -31,6 +31,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         ActiveDialog::RagSearch      => render_rag_search(frame, area, app),
         ActiveDialog::MemoryInput    => render_memory_input(frame, area, app),
         ActiveDialog::BwrapInstall   => render_bwrap_install(frame, area, app),
+        ActiveDialog::GitToken       => render_git_token(frame, area, app),
     }
 }
 
@@ -437,6 +438,149 @@ fn render_bwrap_install(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Centered rect helper used by all dialogs.
+fn render_git_token(frame: &mut Frame, area: Rect, app: &App) {
+    let accent  = app.theme.accent;
+    let primary = app.theme.primary;
+    let success = app.theme.success;
+    let text    = app.theme.text;
+    let dim     = app.theme.text_dim;
+    let bg      = app.theme.bg_panel;
+
+    let host = if app.git_token_host.is_empty() { "github.com" } else { &app.git_token_host };
+
+    let dialog = centered_rect(66, 20, area);
+    frame.render_widget(Clear, dialog);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent))
+        .title(Line::from(vec![
+            Span::styled(" Git Authentication Required ", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
+        ]))
+        .style(Style::default().bg(bg));
+
+    let inner = block.inner(dialog);
+    frame.render_widget(block, dialog);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),  // host line
+            Constraint::Length(1),  // spacer
+            Constraint::Length(1),  // step 1 header
+            Constraint::Length(2),  // step 1 path hint
+            Constraint::Length(1),  // step 2
+            Constraint::Length(1),  // step 3 header
+            Constraint::Length(3),  // step 3 scopes
+            Constraint::Length(1),  // step 4 header
+            Constraint::Length(1),  // spacer
+            Constraint::Length(1),  // token input
+            Constraint::Length(1),  // spacer
+            Constraint::Length(1),  // footer
+        ])
+        .split(inner);
+
+    // Host
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Host: ", Style::default().fg(dim)),
+            Span::styled(host.to_string(), Style::default().fg(primary).add_modifier(Modifier::BOLD)),
+        ])),
+        chunks[0],
+    );
+
+    // Step 1
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  1. Open ", Style::default().fg(text)),
+            Span::styled(
+                format!("{}/settings/tokens/new", host),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        chunks[2],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![Span::styled(
+                "     (Profile photo → Settings → Developer settings",
+                Style::default().fg(dim),
+            )]),
+            Line::from(vec![Span::styled(
+                "      → Personal access tokens → Tokens (classic))",
+                Style::default().fg(dim),
+            )]),
+        ]),
+        chunks[3],
+    );
+
+    // Step 2
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  2. Set a name like ", Style::default().fg(text)),
+            Span::styled("\"HyperLite\"", Style::default().fg(accent)),
+            Span::styled(" and pick an expiration", Style::default().fg(text)),
+        ])),
+        chunks[4],
+    );
+
+    // Step 3
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  3. Check these boxes:", Style::default().fg(text)),
+        ])),
+        chunks[5],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("     ✓ repo     ", Style::default().fg(success)),
+                Span::styled("lets HyperLite push and pull your code", Style::default().fg(dim)),
+            ]),
+            Line::from(vec![
+                Span::styled("     ✓ workflow ", Style::default().fg(success)),
+                Span::styled("lets HyperLite update GitHub Actions", Style::default().fg(dim)),
+            ]),
+            Line::from(vec![
+                Span::styled("     ✓ read:org ", Style::default().fg(success)),
+                Span::styled("lets HyperLite access organisation repos", Style::default().fg(dim)),
+            ]),
+        ]),
+        chunks[6],
+    );
+
+    // Step 4
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  4. Click ", Style::default().fg(text)),
+            Span::styled("\"Generate token\"", Style::default().fg(accent)),
+            Span::styled(" — copy it and paste below:", Style::default().fg(text)),
+        ])),
+        chunks[7],
+    );
+
+    // Token input (masked)
+    let dots = "●".repeat(app.git_token_input.len());
+    let display = if app.git_token_input.is_empty() {
+        Span::styled("  paste token here…", Style::default().fg(dim))
+    } else {
+        Span::styled(format!("  {}_", dots), Style::default().fg(accent).add_modifier(Modifier::BOLD))
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![display]))
+            .block(Block::default().borders(Borders::TOP | Borders::BOTTOM).border_style(Style::default().fg(dim))),
+        chunks[9],
+    );
+
+    // Footer
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Enter to save  ·  Esc to cancel", Style::default().fg(dim)),
+        ])),
+        chunks[11],
+    );
+}
+
 pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;

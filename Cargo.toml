@@ -79,6 +79,8 @@ sysinfo          = { version = "0.32", default-features = false, features = ["sy
 scraper          = "0.22"     # HTML parsing for web search results
 url              = "2"        # URL encoding for search queries
 open             = "5"        # open URLs in browser (optional)
+pdf-extract      = "0.7"      # PDF text extraction
+csv              = "1"        # CSV parsing for spreadsheet analysis
 
 # ── Native llama.cpp inference (feature-gated, compiles llama.cpp from source) ──
 llama-cpp-2      = { version = "0.1", optional = true }
@@ -86,6 +88,9 @@ llama-cpp-2      = { version = "0.1", optional = true }
 [features]
 default = []
 native-inference = ["llama-cpp-2"]
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 opt-level     = 2

@@ -77,6 +77,16 @@ async fn run_app() -> anyhow::Result<()> {
     // ── Hardware ──────────────────────────────────────────────────────────────
     let hardware = hardware::detect();
 
+    // Kill any orphaned llama-server processes from previous sessions.
+    // When Ollama is available it handles inference; stale llama-server
+    // processes waste hundreds of MB each and serve no purpose.
+    if which::which("ollama").is_ok() {
+        let _ = tokio::process::Command::new("pkill")
+            .args(["-f", "llama-server"])
+            .output()
+            .await;
+    }
+
     // ── HTTP client (shared) ──────────────────────────────────────────────────
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
@@ -234,6 +244,8 @@ async fn run_app() -> anyhow::Result<()> {
         bwrap_installing:   false,
         bwrap_sudo_prompt:  false,
         bwrap_sudo_input:   String::new(),
+        git_token_input:    String::new(),
+        git_token_host:     String::new(),
         toast:              None,
 
         http_client,
