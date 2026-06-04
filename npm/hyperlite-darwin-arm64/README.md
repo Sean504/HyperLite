@@ -1,55 +1,66 @@
+```
+  ___ ___                             .____    .__  __
+ /   |   \ ___.__.______   ___________|    |   |__|/  |_  ____
+/    ~    <   |  |\____ \_/ __ \_  __ \    |   |  \   __\/ __ \
+\    Y    /\___  ||  |_> >  ___/|  | \/    |___|  ||  | \  ___/
+ \___|_  / / ____||   __/ \___  >__|  |_______ \__||__|  \___  >
+       \/  \/     |__|        \/              \/             \/
+```
+
 # @hyperlite-ai/darwin-arm64
 
-Native macOS Apple Silicon binary for [HyperLite](https://hyperlite.org) — terminal-native local AI chat.
+Native macOS Apple Silicon binary for **HyperLite** — terminal-native local AI, offline and Metal-accelerated.
 
-> **This is a platform binary package.** Install the main package instead:
+> **This is a platform binary package.** Install the main package:
 > ```bash
 > npm install -g hyperlite-ai
+> hl
 > ```
+
+→ **[hyperlite.org](https://hyperlite.org)**
 
 ---
 
-## What is HyperLite?
+## About HyperLite
 
-HyperLite is a Rust TUI that runs AI models entirely on your local hardware. No cloud, no API keys, no telemetry.
+HyperLite is a local AI assistant built in Rust that runs entirely on your hardware. No cloud, no API keys, no telemetry. On Apple Silicon, inference runs through a Metal-accelerated llama-server installed via Homebrew — using the full unified memory bandwidth of M-series chips for fast local LLM inference.
 
-- Offline-first — works without internet after the initial model download
-- Agentic — the model can read/write files, run shell commands, search the web
-- Connects to llamafile (auto-managed), llama.cpp, LM Studio, KoboldCpp, vLLM, and more
-- Persistent multi-session history in SQLite
+## This package
 
-## Contents
+Contains a single precompiled binary: `hl`
 
-This package contains a single precompiled binary: `hl` (Mach-O, ARM64, macOS).
-
-Built from: `aarch64-apple-darwin` with Rust stable on macOS 14 (Sonoma).
+- Format: Mach-O ARM64, macOS
+- Target: `aarch64-apple-darwin`
+- Compiler: Rust stable, built on macOS 14 (Sonoma)
 
 ## Requirements
 
 - macOS 11+ on Apple Silicon (M1 / M2 / M3 / M4)
-- Node.js 16+ (for the npm launcher only)
+- Node.js 16+ (launcher only)
+- Homebrew recommended (for automatic runtime install)
 
 ## Usage
 
 ```bash
-npm install -g hyperlite-ai   # installs this package automatically on Apple Silicon
-hl                             # launch from Terminal or iTerm2
-hyperlite                      # same
+npm install -g hyperlite-ai
+hl
 ```
 
-## Note
+On first launch, HyperLite installs `llama.cpp` via Homebrew for Metal-accelerated inference and downloads a model sized to your RAM.
 
-On first launch, macOS Gatekeeper may block the binary if it is not notarised. If you see a security warning, run:
+## Gatekeeper note
+
+macOS may block unsigned binaries on first run. If you see a security warning:
 
 ```bash
 xattr -d com.apple.quarantine $(which hl)
 ```
 
-Or go to **System Settings → Privacy & Security** and click "Open Anyway".
+Or go to **System Settings → Privacy & Security → Open Anyway**.
 
-## Links
+---
 
-- [hyperlite.org](https://hyperlite.org)
+→ **[hyperlite.org](https://hyperlite.org)**
 
 ## License
 

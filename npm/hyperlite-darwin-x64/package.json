@@ -1,7 +1,9 @@
 {
   "name": "@hyperlite-ai/darwin-x64",
-  "version": "0.2.0",
-  "description": "HyperLite binary for macOS Intel",
+  "version": "0.3.5",
+  "description": "HyperLite native binary for macOS Intel — terminal-native local AI, fully offline",
+  "keywords": ["local-ai", "local-llm", "macos", "intel-mac", "terminal-ai", "offline-ai", "gguf", "llama-cpp", "tui", "cli"],
+  "homepage": "https://hyperlite.org",
   "os": ["darwin"],
   "cpu": ["x64"],
   "files": ["hl"],

@@ -1,55 +1,64 @@
+```
+  ___ ___                             .____    .__  __
+ /   |   \ ___.__.______   ___________|    |   |__|/  |_  ____
+/    ~    <   |  |\____ \_/ __ \_  __ \    |   |  \   __\/ __ \
+\    Y    /\___  ||  |_> >  ___/|  | \/    |___|  ||  | \  ___/
+ \___|_  / / ____||   __/ \___  >__|  |_______ \__||__|  \___  >
+       \/  \/     |__|        \/              \/             \/
+```
+
 # @hyperlite-ai/darwin-x64
 
-Native macOS Intel binary for [HyperLite](https://hyperlite.org) — terminal-native local AI chat.
+Native macOS Intel binary for **HyperLite** — terminal-native local AI, fully offline.
 
-> **This is a platform binary package.** Install the main package instead:
+> **This is a platform binary package.** Install the main package:
 > ```bash
 > npm install -g hyperlite-ai
+> hl
 > ```
+
+→ **[hyperlite.org](https://hyperlite.org)**
 
 ---
 
-## What is HyperLite?
+## About HyperLite
 
-HyperLite is a Rust TUI that runs AI models entirely on your local hardware. No cloud, no API keys, no telemetry.
+HyperLite is a local AI assistant built in Rust that runs entirely on your hardware. No cloud, no API keys, no telemetry. Runs fully offline after the initial model download. Connects to llama.cpp, Ollama, LM Studio, and other local inference backends.
 
-- Offline-first — works without internet after the initial model download
-- Agentic — the model can read/write files, run shell commands, search the web
-- Connects to llamafile (auto-managed), llama.cpp, LM Studio, KoboldCpp, vLLM, and more
-- Persistent multi-session history in SQLite
+## This package
 
-## Contents
+Contains a single precompiled binary: `hl`
 
-This package contains a single precompiled binary: `hl` (Mach-O, x86_64, macOS).
-
-Built from: `x86_64-apple-darwin` with Rust stable.
+- Format: Mach-O x86\_64, macOS
+- Target: `x86_64-apple-darwin`
+- Compiler: Rust stable
 
 ## Requirements
 
-- macOS 11+ on Intel (x86_64)
-- Node.js 16+ (for the npm launcher only)
+- macOS 11+ on Intel (x86\_64)
+- Node.js 16+ (launcher only)
+- Homebrew recommended (for automatic runtime install)
 
 ## Usage
 
 ```bash
-npm install -g hyperlite-ai   # installs this package automatically on Intel Macs
-hl                             # launch from Terminal or iTerm2
-hyperlite                      # same
+npm install -g hyperlite-ai
+hl
 ```
 
-## Note
+## Gatekeeper note
 
-On first launch, macOS Gatekeeper may block the binary if it is not notarised. If you see a security warning, run:
+macOS may block unsigned binaries on first run. If you see a security warning:
 
 ```bash
 xattr -d com.apple.quarantine $(which hl)
 ```
 
-Or go to **System Settings → Privacy & Security** and click "Open Anyway".
+Or go to **System Settings → Privacy & Security → Open Anyway**.
 
-## Links
+---
 
-- [hyperlite.org](https://hyperlite.org)
+→ **[hyperlite.org](https://hyperlite.org)**
 
 ## License
 

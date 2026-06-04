@@ -1,7 +1,9 @@
 {
   "name": "@hyperlite-ai/linux-x64",
-  "version": "0.2.0",
-  "description": "HyperLite binary for Linux x64",
+  "version": "0.3.5",
+  "description": "HyperLite native binary for Linux x64 — terminal-native local AI with CUDA GPU acceleration via Ollama",
+  "keywords": ["local-ai", "local-llm", "linux", "terminal-ai", "ollama", "cuda", "gpu-inference", "offline-ai", "gguf", "llama-cpp", "tui", "cli"],
+  "homepage": "https://hyperlite.org",
   "os": ["linux"],
   "cpu": ["x64"],
   "files": ["hl"],

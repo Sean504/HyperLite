@@ -1,55 +1,64 @@
+```
+  ___ ___                             .____    .__  __
+ /   |   \ ___.__.______   ___________|    |   |__|/  |_  ____
+/    ~    <   |  |\____ \_/ __ \_  __ \    |   |  \   __\/ __ \
+\    Y    /\___  ||  |_> >  ___/|  | \/    |___|  ||  | \  ___/
+ \___|_  / / ____||   __/ \___  >__|  |_______ \__||__|  \___  >
+       \/  \/     |__|        \/              \/             \/
+```
+
 # @hyperlite-ai/win32-x64
 
-Native Windows x64 binary for [HyperLite](https://hyperlite.org) — terminal-native local AI chat.
+Native Windows x64 binary for **HyperLite** — terminal-native local AI, offline and GPU-accelerated.
 
-> **This is a platform binary package.** Install the main package instead:
+> **This is a platform binary package.** Install the main package:
 > ```bash
 > npm install -g hyperlite-ai
+> hl
 > ```
+
+→ **[hyperlite.org](https://hyperlite.org)**
 
 ---
 
-## What is HyperLite?
+## About HyperLite
 
-HyperLite is a Rust TUI that runs AI models entirely on your local hardware. No cloud, no API keys, no telemetry.
+HyperLite is a local AI assistant built in Rust that runs entirely on your hardware. No cloud, no API keys, no telemetry. On Windows with an NVIDIA GPU, it downloads a CUDA-accelerated llama-server automatically. Runs fully offline after setup.
 
-- Offline-first — works without internet after the initial model download
-- Agentic — the model can read/write files, run shell commands, search the web
-- Connects to llamafile (auto-managed), llama.cpp, LM Studio, KoboldCpp, vLLM, and more
-- Persistent multi-session history in SQLite
+## This package
 
-## Contents
+Contains a single precompiled binary: `hl.exe`
 
-This package contains a single precompiled binary: `hl.exe` (PE32+, Windows x64).
-
-Built from: `x86_64-pc-windows-msvc` with Rust stable.
+- Format: PE32+, Windows x64
+- Target: `x86_64-pc-windows-msvc`
+- Compiler: Rust stable, MSVC toolchain
 
 ## Requirements
 
 - Windows 10 or 11 (x64)
-- Node.js 16+ (for the npm launcher only)
-- A terminal that supports VT sequences — **Windows Terminal** recommended
+- Node.js 16+ (launcher only)
+- **Windows Terminal** recommended for best rendering
 
 ## Usage
 
 ```powershell
-npm install -g hyperlite-ai   # installs this package automatically on Windows
-hl                             # launch from PowerShell or Windows Terminal
-hyperlite                      # same
+npm install -g hyperlite-ai
+hl
 ```
 
-## Note on terminals
+## Terminal compatibility
 
-HyperLite renders a full TUI using crossterm and Windows Console API. It works in:
-- Windows Terminal ✓ (recommended)
-- PowerShell 7 in Windows Terminal ✓
-- Git Bash / WSL terminal ✓ (runs the Windows binary via interop)
+| Terminal | Status |
+|----------|--------|
+| Windows Terminal | ✓ Recommended |
+| PowerShell 7 in Windows Terminal | ✓ Full support |
+| WSL2 terminal | ✓ Full support |
+| Git Bash | ✓ Works |
+| Legacy cmd.exe | ⚠ Rendering may degrade |
 
-Legacy `cmd.exe` may have rendering issues.
+---
 
-## Links
-
-- [hyperlite.org](https://hyperlite.org)
+→ **[hyperlite.org](https://hyperlite.org)**
 
 ## License
 

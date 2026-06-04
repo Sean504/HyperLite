@@ -1,7 +1,9 @@
 {
   "name": "@hyperlite-ai/darwin-arm64",
-  "version": "0.2.0",
-  "description": "HyperLite binary for macOS Apple Silicon",
+  "version": "0.3.5",
+  "description": "HyperLite native binary for macOS Apple Silicon — terminal-native local AI with Metal GPU acceleration",
+  "keywords": ["local-ai", "local-llm", "macos", "apple-silicon", "m1", "m2", "m3", "terminal-ai", "metal", "offline-ai", "gguf", "llama-cpp", "tui", "cli"],
+  "homepage": "https://hyperlite.org",
   "os": ["darwin"],
   "cpu": ["arm64"],
   "files": ["hl"],
