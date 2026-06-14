@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 use crate::app::App;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,30 +46,39 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let Some(toast) = app.toast.as_ref() else { return };
 
     let msg_len  = toast.message.chars().count() as u16;
-    let width    = (msg_len + 4).min(area.width.saturating_sub(2));
+    let width    = (msg_len + 6).min(area.width.saturating_sub(2));
     let x        = area.width.saturating_sub(width + 1);
-    let toast_area = Rect { x, y: area.y, width, height: 3 };
+    // 3 rows of bubble + 1 row of tail
+    let toast_area = Rect { x, y: area.y, width, height: 4 };
 
     let (fg, icon) = match toast.level {
-        ToastLevel::Info    => (app.theme.primary, " ℹ "),
+        ToastLevel::Info    => (app.theme.primary, " ▸ "),
         ToastLevel::Success => (app.theme.success,  " ✓ "),
         ToastLevel::Warning => (app.theme.warning,  " ⚠ "),
         ToastLevel::Error   => (app.theme.error,    " ✗ "),
     };
 
-    let border_style = Style::default().fg(fg);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .style(Style::default().bg(app.theme.bg_panel));
-
-    let line = Line::from(vec![
-        Span::styled(icon, Style::default().fg(fg).add_modifier(Modifier::BOLD)),
-        Span::styled(toast.message.clone(), Style::default().fg(app.theme.text)),
-    ]);
-
-    let para = Paragraph::new(line).block(block);
-
     frame.render_widget(Clear, toast_area);
-    frame.render_widget(para, toast_area);
+
+    // Pixel speech bubble
+    let bubble = Rect { x, y: area.y, width, height: 3 };
+    frame.render_widget(
+        Block::default().style(Style::default().bg(app.theme.bg_panel)),
+        bubble,
+    );
+    super::pixel::frame(frame, bubble, fg, app.theme.bg_panel);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(icon, Style::default().fg(fg).add_modifier(Modifier::BOLD)),
+            Span::styled(toast.message.clone(), Style::default().fg(app.theme.text)),
+        ])),
+        super::pixel::inner(bubble),
+    );
+
+    // Tail: small pixel step under the bubble's left edge
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("▀█", Style::default().fg(fg)))),
+        Rect { x: x + 3, y: area.y + 3, width: 2.min(area.width.saturating_sub(x + 3)), height: 1 },
+    );
 }

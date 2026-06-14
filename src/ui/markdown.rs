@@ -91,24 +91,50 @@ pub fn render(markdown: &str, theme: &Theme, width: u16) -> Text<'static> {
             }
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = false;
-                // Top border with language tag
-                let lang_label = if code_lang.is_empty() {
-                    "code".to_string()
-                } else {
-                    code_lang.clone()
-                };
-                let border_line = format!(" ╭─ {} ", lang_label);
+                let lang_label = if code_lang.is_empty() { "code".to_string() } else { code_lang.clone() };
+
+                let total    = code_buf.lines().count().max(1);
+                let inner_w  = (width.saturating_sub(2) as usize).max(12);
+                let gutter_w = format!("{}", total).len().max(2);
+
+                // ── Card top: ╭─ lang ─────────────────── ⧉ copy ─╮ ──────────────
+                let badge = format!("─ {} ", lang_label);
+                let copy_hint = " ⧉ ⌘K copy ";
+                let used = badge.chars().count() + copy_hint.chars().count() + 2;
+                let fill = inner_w.saturating_sub(used);
                 lines.push(Line::from(vec![
-                    Span::styled(border_line, Style::default().fg(theme.border_hi)),
+                    Span::styled(format!(" ╭{}", badge), Style::default().fg(theme.border_hi)),
+                    Span::styled("─".repeat(fill), Style::default().fg(theme.border)),
+                    Span::styled(copy_hint, Style::default().fg(theme.text_dim)),
+                    Span::styled("╮", Style::default().fg(theme.border_hi)),
                 ]));
+
+                // ── Body: gutter line numbers, collapse very long blocks ────────
                 let highlighted = crate::ui::syntax::highlight(&code_buf, &code_lang);
-                for hl_line in highlighted {
-                    let mut spans = vec![Span::styled("  ", Style::default())];
+                let show = if total > 40 { 30 } else { total };
+                for (n, hl_line) in highlighted.into_iter().enumerate() {
+                    if n >= show { break; }
+                    let mut spans = vec![
+                        Span::styled(" │ ", Style::default().fg(theme.border_hi)),
+                        Span::styled(format!("{:>w$}  ", n + 1, w = gutter_w), Style::default().fg(theme.text_dim)),
+                    ];
                     spans.extend(hl_line.spans.into_iter());
                     lines.push(Line::from(spans));
                 }
+                if total > show {
+                    lines.push(Line::from(vec![
+                        Span::styled(" │ ", Style::default().fg(theme.border_hi)),
+                        Span::styled(format!("… {} more lines (Copy Last Code)", total - show),
+                            Style::default().fg(theme.text_dim).add_modifier(Modifier::ITALIC)),
+                    ]));
+                }
+
+                // ── Card bottom: ╰─ N lines ────────────────────────────────────
+                let footer = format!("─ {} line{} ", total, if total == 1 { "" } else { "s" });
+                let ffill = inner_w.saturating_sub(footer.chars().count() + 1);
                 lines.push(Line::from(vec![
-                    Span::styled(" ╰────", Style::default().fg(theme.border_hi)),
+                    Span::styled(format!(" ╰{}", footer), Style::default().fg(theme.border_hi)),
+                    Span::styled("─".repeat(ffill), Style::default().fg(theme.border)),
                 ]));
                 lines.push(Line::default());
                 code_buf.clear();

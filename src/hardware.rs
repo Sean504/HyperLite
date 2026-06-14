@@ -577,6 +577,11 @@ impl HardwareInfo {
         )
     }
 
+    /// Compact recommendation for the narrow sidebar — e.g. "Model 14–35B".
+    pub fn recommendation_short(&self) -> String {
+        format!("Model {}", self.max_model_tier().label())
+    }
+
     /// Derive optimal llama-server launch parameters from detected hardware.
     /// These are passed directly to the inference runtime.
     pub fn optimal_inference_params(&self) -> InferenceParams {

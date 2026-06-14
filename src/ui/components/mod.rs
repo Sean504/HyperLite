@@ -1,3 +1,5 @@
+pub mod pixel;
+pub mod mascot;
 pub mod spinner;
 pub mod toast;
 pub mod footer;

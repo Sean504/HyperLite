@@ -1,9 +1,9 @@
 /// Scrollable message history with sticky-bottom behaviour.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::Line;
+use ratatui::layout::{Alignment, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use crate::app::App;
 use super::message::render_message;
@@ -17,10 +17,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let width  = inner.width;
     let height = inner.height as usize;
 
+    // Empty session + nothing streaming → splash instead of dead air
+    let visible_count = app.messages.iter().filter(|m| !m.hidden).count();
+    if visible_count == 0 && app.streaming_buf.is_empty() && !app.streaming {
+        render_splash(frame, inner, app);
+        return;
+    }
+
     // Build all display lines from messages
     let mut all_lines: Vec<Line<'static>> = vec![];
 
+    let mut first = true;
     for msg in app.messages.iter().filter(|m| !m.hidden) {
+        if !first {
+            all_lines.push(separator_line(width, app));
+        }
+        first = false;
         let msg_lines = render_message(msg, &app.theme, width, app.show_tool_details);
         all_lines.extend(msg_lines);
     }
@@ -72,6 +84,81 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         };
         frame.render_stateful_widget(sb, sb_area, &mut sb_state);
     }
+}
+
+/// Dim CRT-printout separator between messages.
+fn separator_line(width: u16, app: &App) -> Line<'static> {
+    let w = (width as usize).saturating_sub(4).min(56);
+    Line::from(vec![
+        Span::styled("  ░▒".to_string(), Style::default().fg(app.theme.text_dim)),
+        Span::styled("┄".repeat(w), Style::default().fg(app.theme.text_dim)),
+        Span::styled("▒░".to_string(), Style::default().fg(app.theme.text_dim)),
+    ])
+}
+
+// ── Empty-state splash ────────────────────────────────────────────────────────
+// Pixel-art robot + wordmark + first-step hints. Drawn from a char-grid sprite:
+//   # = casing  . = face panel  E = eye  M = mouth  (space = transparent)
+// Each sprite pixel renders as a 2-char block so pixels come out square-ish.
+
+const ROBOT: &[&str] = &[
+    "    ##    ",
+    "##########",
+    "#........#",
+    "#.EE..EE.#",
+    "#........#",
+    "#.MMMMMM.#",
+    "##########",
+    " ##    ## ",
+];
+
+fn render_splash(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
+    let mut lines: Vec<Line<'static>> = vec![];
+
+    // Robot sprite, pixel grid → colored block spans
+    for row in ROBOT {
+        let mut spans: Vec<Span<'static>> = vec![];
+        for ch in row.chars() {
+            let (glyph, color) = match ch {
+                '#' => ("██", theme.primary),
+                '.' => ("░░", theme.bg_element),
+                'E' => ("██", theme.accent),
+                'M' => ("▓▓", theme.text_dim),
+                _   => ("  ", theme.bg),
+            };
+            spans.push(Span::styled(glyph.to_string(), Style::default().fg(color)));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::default());
+    lines.push(Line::from(vec![
+        Span::styled("H Y P E R L I T E", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+    ]));
+    lines.push(Line::default());
+
+    // Each hint is its own centered line so the whole block sits under the robot
+    let hint = |key: &'static str, desc: &'static str| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(key.to_string(), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("  {}", desc), Style::default().fg(theme.text_muted)),
+        ])
+    };
+    lines.push(hint("⏎", "type below to start"));
+    lines.push(hint("Ctrl+K", "command palette"));
+    lines.push(hint("Ctrl+M", "switch model"));
+    lines.push(hint("?", "all keybinds"));
+
+    // Center vertically + horizontally
+    let h = lines.len() as u16;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    let splash_area = Rect { x: area.x, y, width: area.width, height: h.min(area.height) };
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center),
+        splash_area,
+    );
 }
 
 /// Count the total visual lines after word-wrap at the given width.

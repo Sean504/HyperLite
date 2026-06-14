@@ -1011,10 +1011,10 @@ pub fn render_booting(f: &mut ratatui::Frame, steps: &[BootStep], current: &str)
     let checklist_w = inner.width.saturating_sub(8);
 
     for (i, step) in steps.iter().enumerate() {
-        let (icon, color) = if step.ok { ("✓", green) } else { ("⚠", yellow) };
+        let (tag, color) = if step.ok { ("[ OK ]", green) } else { ("[ !! ]", yellow) };
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!("  {}  ", icon), Style::default().fg(color)),
+                Span::styled(format!("  {} ", tag), Style::default().fg(color).add_modifier(Modifier::BOLD)),
                 Span::styled(step.label.clone(), Style::default().fg(if step.ok { teal } else { yellow })),
             ])),
             Rect { x: checklist_x, y: checklist_y + i as u16, width: checklist_w, height: 1 },
@@ -1025,11 +1025,112 @@ pub fn render_booting(f: &mut ratatui::Frame, steps: &[BootStep], current: &str)
         let cur_y = checklist_y + steps.len() as u16;
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("  ⟳  ", Style::default().fg(purple)),
+                Span::styled("  [ ▸▸ ] ", Style::default().fg(purple).add_modifier(Modifier::BOLD)),
                 Span::styled(current, Style::default().fg(muted)),
             ])),
             Rect { x: checklist_x, y: cur_y, width: checklist_w, height: 1 },
         );
+    }
+}
+
+// ── POST typewriter ───────────────────────────────────────────────────────────
+// Fake-BIOS power-on self-test played right before the chat UI opens.
+// Types the real boot checks plus the offline-mode line over ~0.9s.
+// Any keypress skips it.
+
+pub fn play_post(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    steps: &[BootStep],
+) -> anyhow::Result<()> {
+    let mut post: Vec<(bool, String)> = steps.iter()
+        .map(|s| (s.ok, s.label.clone()))
+        .collect();
+    post.push((true, "session db mounted".to_string()));
+    post.push((true, "uplink: NONE — offline mode".to_string()));
+
+    let total_chars: usize = post.iter().map(|(_, l)| l.chars().count()).sum::<usize>().max(1);
+    let start    = Instant::now();
+    let duration = Duration::from_millis(900);
+
+    loop {
+        let frac = (start.elapsed().as_millis() as f64 / duration.as_millis() as f64).min(1.0);
+        let budget = (total_chars as f64 * frac).ceil() as usize;
+        terminal.draw(|f| render_post(f, &post, budget, frac >= 1.0))?;
+        if frac >= 1.0 { break; }
+        if event::poll(Duration::from_millis(30))? {
+            if let Event::Key(k) = event::read()? {
+                if k.kind == KeyEventKind::Press {
+                    // Skip: show the finished screen for one frame, then go
+                    terminal.draw(|f| render_post(f, &post, total_chars, true))?;
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_post(f: &mut ratatui::Frame, post: &[(bool, String)], mut budget: usize, done: bool) {
+    let area   = f.area();
+    let purple = ratatui::style::Color::Rgb(189, 147, 249);
+    let teal   = ratatui::style::Color::Rgb(0,   245, 212);
+    let green  = ratatui::style::Color::Rgb(80,  250, 123);
+    let yellow = ratatui::style::Color::Rgb(241, 250, 140);
+    let dim    = ratatui::style::Color::Rgb(55,  55,  90);
+    let bg     = ratatui::style::Color::Rgb(8,   8,   18);
+
+    f.render_widget(Block::default().style(Style::default().bg(bg)), area);
+
+    let x = area.x + area.width.saturating_sub(64) / 2;
+    let block_h = post.len() as u16 + 5;
+    let mut y = area.y + area.height.saturating_sub(block_h) / 2;
+    let w = area.width.saturating_sub(x.saturating_sub(area.x) + 2);
+
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                concat!("HYPERLITE POST — v", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        Rect { x, y, width: w, height: 1 },
+    );
+    y += 2;
+
+    for (ok, label) in post {
+        if budget == 0 { break; }
+        let count = label.chars().count();
+        let shown = budget.min(count);
+        let typed: String = label.chars().take(shown).collect();
+        let complete = shown == count;
+        budget -= shown;
+
+        let mut spans = vec![];
+        if complete {
+            let (tag, color) = if *ok { ("[ OK ]", green) } else { ("[ !! ]", yellow) };
+            spans.push(Span::styled(format!("{} ", tag), Style::default().fg(color).add_modifier(Modifier::BOLD)));
+            spans.push(Span::styled(typed, Style::default().fg(teal)));
+        } else {
+            spans.push(Span::styled("[ ▸▸ ] ", Style::default().fg(dim)));
+            spans.push(Span::styled(typed, Style::default().fg(teal)));
+            spans.push(Span::styled("█", Style::default().fg(teal)));
+        }
+        if y < area.y + area.height {
+            f.render_widget(Paragraph::new(Line::from(spans)), Rect { x, y, width: w, height: 1 });
+        }
+        y += 1;
+    }
+
+    if done {
+        y += 1;
+        if y < area.y + area.height {
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("all systems nominal", Style::default().fg(green).add_modifier(Modifier::BOLD)),
+                ])),
+                Rect { x, y, width: w, height: 1 },
+            );
+        }
     }
 }
 

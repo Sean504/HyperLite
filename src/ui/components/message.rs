@@ -1,6 +1,6 @@
 /// Render a single chat message (user or assistant) into ratatui Lines.
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use crate::session::message::{Message, Part, Role, DiffLineKind, DiffProposalState};
 use crate::ui::theme::Theme;
@@ -8,8 +8,26 @@ use super::tool_call::render_tool_part;
 
 fn fmt_ts(ts: i64) -> String {
     chrono::DateTime::from_timestamp(ts, 0)
-        .map(|dt: chrono::DateTime<chrono::Utc>| dt.format("%H:%M").to_string())
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%H:%M").to_string())
         .unwrap_or_default()
+}
+
+/// Seconds-resolution timestamp for the tool trace log.
+fn fmt_ts_log(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+        .unwrap_or_default()
+}
+
+/// Thin single-line nameplate shared by user and assistant headers:
+/// ` │ NAME │  HH:MM` — no body walls, so message text stays copy-friendly.
+fn header_chip(name: &str, color: Color, ts: &str, theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(" │ ", Style::default().fg(color)),
+        Span::styled(name.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        Span::styled(" │", Style::default().fg(color)),
+        Span::styled(format!("  {}", ts), Style::default().fg(theme.text_dim)),
+    ])
 }
 
 /// Returns all display lines for a message.
@@ -17,7 +35,7 @@ pub fn render_message(msg: &Message, theme: &Theme, width: u16, show_tool_detail
     let mut lines: Vec<Line<'static>> = vec![];
 
     match msg.role {
-        Role::User      => render_user(msg, theme, &mut lines),
+        Role::User      => render_user(msg, theme, width, &mut lines),
         Role::Assistant => render_assistant(msg, theme, width, show_tool_details, &mut lines),
     }
 
@@ -25,33 +43,32 @@ pub fn render_message(msg: &Message, theme: &Theme, width: u16, show_tool_detail
     lines
 }
 
-fn render_user(msg: &Message, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+fn render_user(msg: &Message, theme: &Theme, _width: u16, lines: &mut Vec<Line<'static>>) {
     // Check if this is an internal tool result message
     let text = msg.parts.iter().find_map(|p| if let Part::Text(t) = p { Some(t.text.trim()) } else { None }).unwrap_or("");
     if text.starts_with("<tool_result>") {
-        render_tool_result_msg(text, theme, lines);
+        render_tool_result_msg(text, msg.created_at, theme, lines);
         return;
     }
 
+    // Thin nameplate + free-flowing text (no walls → easy to select/copy)
     let ts = fmt_ts(msg.created_at);
-    lines.push(Line::from(vec![
-        Span::styled(" You ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(ts, Style::default().fg(theme.text_dim)),
-    ]));
+    lines.push(header_chip("YOU", theme.accent, &ts, theme));
 
     for part in &msg.parts {
         if let Part::Text(t) = part {
-            for text_line in t.text.lines() {
+            for raw in t.text.lines() {
                 lines.push(Line::from(vec![
-                    Span::styled(" ┃ ", Style::default().fg(theme.accent)),
-                    Span::styled(text_line.to_string(), Style::default().fg(theme.text)),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(raw.to_string(), Style::default().fg(theme.text)),
                 ]));
             }
         }
     }
 }
 
-fn render_tool_result_msg(text: &str, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+fn render_tool_result_msg(text: &str, created_at: i64, theme: &Theme, lines: &mut Vec<Line<'static>>) {
+    let ts = fmt_ts_log(created_at);
     // Parse all <tool_result> blocks in the message
     let mut rest = text;
     while let Some(start) = rest.find("<tool_result>") {
@@ -97,7 +114,7 @@ fn render_tool_result_msg(text: &str, theme: &Theme, lines: &mut Vec<Line<'stati
             continue;
         }
 
-        // ── All other tools ────────────────────────────────────────────────────
+        // ── All other tools: syslog-style trace line ──────────────────────────
         let (icon, status_style) = if status == "error" {
             ("✗", Style::default().fg(theme.error))
         } else {
@@ -106,7 +123,10 @@ fn render_tool_result_msg(text: &str, theme: &Theme, lines: &mut Vec<Line<'stati
 
         let friendly = friendly_tool_result(name, output, status == "error");
         lines.push(Line::from(vec![
-            Span::styled(format!(" {} ", icon), status_style),
+            Span::styled(format!(" [{}] ", ts), Style::default().fg(theme.text_dim)),
+            Span::styled(format!("{} ", icon), status_style),
+            Span::styled(name.to_string(), Style::default().fg(theme.secondary).add_modifier(Modifier::BOLD)),
+            Span::styled(" · ", Style::default().fg(theme.text_dim)),
             Span::styled(friendly, Style::default().fg(if status == "error" { theme.error } else { theme.text_muted })),
         ]));
 
@@ -213,11 +233,8 @@ fn render_assistant(msg: &Message, theme: &Theme, width: u16, show_tool_details:
         raw_model.to_string()
     };
     let ts = fmt_ts(msg.created_at);
-    lines.push(Line::from(vec![
-        Span::styled(" ", Style::default().fg(theme.primary)),
-        Span::styled(model, Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("  {}", ts), Style::default().fg(theme.text_dim)),
-    ]));
+    // Same thin nameplate as the user, in the model's color
+    lines.push(header_chip(&model, theme.primary, &ts, theme));
 
     for part in &msg.parts {
         match part {
@@ -250,7 +267,7 @@ fn render_assistant(msg: &Message, theme: &Theme, width: u16, show_tool_details:
 
             Part::Reasoning(r) => {
                 lines.push(Line::from(vec![
-                    Span::styled(" 💭 thinking", Style::default().fg(theme.text_dim).add_modifier(Modifier::ITALIC)),
+                    Span::styled(" ░▒ trace", Style::default().fg(theme.text_dim).add_modifier(Modifier::ITALIC)),
                 ]));
                 for r_line in r.text.lines().take(4) {
                     lines.push(Line::from(vec![
@@ -266,58 +283,36 @@ fn render_assistant(msg: &Message, theme: &Theme, width: u16, show_tool_details:
             }
 
             Part::Tool(tp) => {
-                for tool_line in render_tool_part(tp, theme, show_tool_details) {
+                for tool_line in render_tool_part(tp, theme, show_tool_details, msg.created_at) {
                     lines.push(tool_line);
                 }
             }
 
             Part::File(f) => {
                 lines.push(Line::from(vec![
-                    Span::styled(format!(" 📎 {}", f.filename), Style::default().fg(theme.accent)),
+                    Span::styled(format!(" ▣ {}", f.filename), Style::default().fg(theme.accent)),
                 ]));
             }
 
             Part::Diff(dp) => {
-                let header_color = match dp.state {
-                    DiffProposalState::Pending   => theme.accent,
-                    DiffProposalState::Approved  => theme.success,
-                    DiffProposalState::Discarded => theme.text_dim,
+                // New changes go through the full-screen reviewer; this renders
+                // only as a compact one-line receipt (also covers legacy sessions
+                // that persisted an inline diff proposal).
+                let added   = dp.diff_lines.iter().filter(|d| d.kind == DiffLineKind::Added).count();
+                let removed = dp.diff_lines.iter().filter(|d| d.kind == DiffLineKind::Removed).count();
+                let (marker, mstyle) = match dp.state {
+                    DiffProposalState::Pending   => ("± ", Style::default().fg(theme.accent)),
+                    DiffProposalState::Approved  => ("✓ ", Style::default().fg(theme.success)),
+                    DiffProposalState::Discarded => ("✗ ", Style::default().fg(theme.text_dim)),
                 };
-
-                // File path header — no confirmation hint yet, show it AFTER the diff
+                let path = std::path::Path::new(&dp.file_path).file_name()
+                    .and_then(|n| n.to_str()).unwrap_or(dp.file_path.as_str());
                 lines.push(Line::from(vec![
-                    Span::styled(" ± ", Style::default().fg(header_color)),
-                    Span::styled(dp.file_path.clone(), Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!(" {}", marker), mstyle),
+                    Span::styled(path.to_string(), Style::default().fg(theme.text_muted)),
+                    Span::styled(format!("  +{} ", added), Style::default().fg(theme.diff_add_fg)),
+                    Span::styled(format!("−{}", removed), Style::default().fg(theme.diff_del_fg)),
                 ]));
-
-                // Diff lines — with background highlighting so they're readable
-                for dl in &dp.diff_lines {
-                    let (prefix, fg, bg) = match dl.kind {
-                        DiffLineKind::Added   => ("+ ", theme.diff_add_fg, Some(theme.diff_add_bg)),
-                        DiffLineKind::Removed => ("- ", theme.diff_del_fg, Some(theme.diff_del_bg)),
-                        DiffLineKind::Context => ("  ", theme.text_dim,    None),
-                        DiffLineKind::Header  => ("  ", theme.text_dim,    None),
-                    };
-                    let content = dl.content.clone();
-                    let style = match bg {
-                        Some(b) => Style::default().fg(fg).bg(b),
-                        None    => Style::default().fg(fg),
-                    };
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("  {}{}", prefix, content), style),
-                    ]));
-                }
-
-                // Confirmation hint AFTER the diff so the user reads it last
-                let state_label = match dp.state {
-                    DiffProposalState::Pending   => " ·  Enter → apply   Esc → discard",
-                    DiffProposalState::Approved  => " ·  ✓ applied",
-                    DiffProposalState::Discarded => " ·  ✗ discarded",
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(state_label.to_string(), Style::default().fg(header_color).add_modifier(Modifier::BOLD)),
-                ]));
-                lines.push(Line::default());
             }
         }
     }

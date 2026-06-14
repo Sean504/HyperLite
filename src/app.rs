@@ -18,15 +18,49 @@ use crate::session::message::{Message, Part, PermissionRequest, Role, Session, T
 use crate::ui::components::spinner::Spinner;
 use crate::ui::theme::Theme;
 
-#[derive(Debug, Clone, PartialEq)]
-/// A file write intercepted for diff approval before being applied.
-pub struct PendingDiff {
-    pub call:      crate::tools::ToolCall,
+/// One file the agent proposes to change, as shown in the review screen.
+#[derive(Debug, Clone)]
+pub struct ChangeEntry {
+    pub call:       crate::tools::ToolCall,   // re-executed on apply (fresh disk read)
+    pub file_path:  String,
+    pub tool_name:  String,                   // "write_file" | "edit_file"
+    pub is_new:     bool,                      // file did not exist before
+    pub diff_lines: Vec<crate::session::message::DiffLine>,
+    pub added:      usize,
+    pub removed:    usize,
+    pub status:     ChangeStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ChangeStatus { Pending, Applied, Skipped }
+
+/// A batch of proposed file changes awaiting review.
+#[derive(Debug, Clone)]
+pub struct Changeset {
+    pub entries:         Vec<ChangeEntry>,
+    pub remaining_calls: Vec<crate::tools::ToolCall>, // non-edit calls to run after review
+    pub results:         Vec<String>,                 // <tool_result> blocks accumulated on resolve
+}
+
+impl Changeset {
+    pub fn total_added(&self)   -> usize { self.entries.iter().map(|e| e.added).sum() }
+    pub fn total_removed(&self) -> usize { self.entries.iter().map(|e| e.removed).sum() }
+    pub fn pending_count(&self) -> usize { self.entries.iter().filter(|e| e.status == ChangeStatus::Pending).count() }
+    pub fn first_pending(&self) -> Option<usize> {
+        self.entries.iter().position(|e| e.status == ChangeStatus::Pending)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ReviewView { Overview, File }
+
+/// Session-wide record of an applied/skipped change, shown in the sidebar cockpit.
+#[derive(Debug, Clone)]
+pub struct ChangeLogEntry {
     pub file_path: String,
-    pub proposed:  String,        // full content to write (write_file)
-    pub old_text:  Option<String>,// for edit_file
-    pub new_text:  Option<String>,// for edit_file
-    pub remaining_calls: Vec<crate::tools::ToolCall>, // tool calls to run after approval
+    pub added:     usize,
+    pub removed:   usize,
+    pub status:    ChangeStatus,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +132,13 @@ pub struct App {
 
     // Hardware
     pub hardware:       HardwareInfo,
+    // Live system stats for the sidebar gauges (refreshed ~1 Hz in tick())
+    pub live_sys:         sysinfo::System,
+    pub live_cpu_pct:     f32,
+    pub live_ram_used_mb: u64,
+    pub live_stat_tick:   u8,
+    // Frame counter for sprite/mascot animation (80ms per tick)
+    pub anim_tick:        usize,
 
     // Project context
     pub project_context_active: bool,
@@ -133,7 +174,13 @@ pub struct App {
     pub pending_permission:  Option<PermissionRequest>,
 
     // Diff approval — pending write waiting for user to approve/discard
-    pub pending_diff: Option<PendingDiff>,
+    // Full-screen change reviewer
+    pub changeset:     Option<Changeset>,
+    pub review_open:   bool,          // reviewer owns the screen
+    pub review_view:   ReviewView,
+    pub review_cursor: usize,         // selected file in overview
+    pub review_scroll: usize,         // scroll offset in file view
+    pub changes_log:   Vec<ChangeLogEntry>, // session-wide applied/skipped history
 
     // Sandbox mode — shell commands run inside bwrap isolation
     pub sandbox_enabled:   bool,
@@ -291,6 +338,17 @@ impl App {
         self.cursor_blink_tick = self.cursor_blink_tick.wrapping_add(1);
         if self.cursor_blink_tick % 5 == 0 {
             self.cursor_blink_on = !self.cursor_blink_on;
+        }
+
+        self.anim_tick = self.anim_tick.wrapping_add(1);
+
+        // Live CPU/RAM stats for the sidebar gauges — every ~1s (80ms × 12)
+        self.live_stat_tick = self.live_stat_tick.wrapping_add(1);
+        if self.live_stat_tick % 12 == 0 {
+            self.live_sys.refresh_memory();
+            self.live_sys.refresh_cpu_usage();
+            self.live_ram_used_mb = self.live_sys.used_memory() / 1024 / 1024;
+            self.live_cpu_pct     = self.live_sys.global_cpu_usage();
         }
 
         // Auth gate typewriter animation
@@ -481,19 +539,31 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
                     let plan_has_more = !app.active_plan.is_empty()
                         && app.plan_step < app.active_plan.len();
 
-                    // Case B: model described an action passively without calling a tool.
-                    let has_passive = ["I'll ", "I will ", "I can ", "Let me ", "I would ", "Here's "]
+                    // Case B: model described an action — or dumped a code block —
+                    // without ever calling a tool.
+                    let has_code_block = normalized.contains("```");
+                    let has_passive = ["I'll ", "I will ", "I can ", "Let me ", "I would ",
+                                       "Here's ", "Here is ", "Sure,", "Sure!"]
                         .iter().any(|p| normalized.contains(p));
+
+                    // Always evaluate against the REAL user request: skip our own
+                    // hidden enforcer nudges and tool-result messages. Otherwise the
+                    // injected nudge becomes "last user text" and has_action collapses,
+                    // so the enforcer only fires once and gives up.
                     let last_user_text = app.messages.iter().rev()
-                        .skip(1)
-                        .find(|m| m.role == Role::User && !m.text_content().starts_with("<tool_result>"))
+                        .filter(|m| m.role == Role::User && !m.hidden)
+                        .find(|m| !m.text_content().starts_with("<tool_result>"))
                         .map(|m| m.text_content())
                         .unwrap_or_default();
-                    let has_action = ["write", "create", "make", "edit", "fix", "build",
-                                      "add", "implement", "delete", "remove", "update"]
+                    let has_action = ["write", "create", "make", "edit", "fix", "build", "save",
+                                      "add", "implement", "delete", "remove", "update",
+                                      "generate", "script", "program", "file"]
                         .iter().any(|k| last_user_text.to_lowercase().contains(k));
 
-                    if plan_has_more || (has_passive && has_action) {
+                    // Cap enforced retries so a stubborn model can't flash endlessly.
+                    let under_retry_cap = app.tool_iterations < 3;
+
+                    if plan_has_more || (under_retry_cap && (has_passive || has_code_block) && has_action) {
                         app.tool_enforcer_pending = true;
                     }
                 }
@@ -677,19 +747,17 @@ fn handle_internal_event(app: &mut App, ev: Event) -> bool {
 }
 
 async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Result<bool> {
-    // Diff approval — Enter to apply, Esc to discard
-    if app.pending_diff.is_some() {
-        match key.code {
-            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                apply_pending_diff(app).await?;
-                return Ok(false);
-            }
-            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                discard_pending_diff(app).await?;
-                return Ok(false);
-            }
-            _ => return Ok(false), // block all other keys while diff pending
-        }
+    // Full-screen change reviewer owns all keys while open
+    if app.review_open {
+        return handle_review_key(app, key).await;
+    }
+    // Deferred changeset — Ctrl+R reopens the reviewer
+    if app.changeset.is_some() && !app.review_open
+        && key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        app.review_open = true;
+        app.review_view = ReviewView::Overview;
+        return Ok(false);
     }
 
     // Quit is always global — works even with dialogs/permission prompts open
@@ -1780,6 +1848,7 @@ async fn confirm_dialog(app: &mut App) -> anyhow::Result<()> {
                 Some("Pick Theme")         => open_dialog(app, ActiveDialog::ThemePicker),
                 Some("Open in Editor")     => open_external_editor(app).await?,
                 Some("Copy Last Response") => copy_last_message(app),
+                Some("Copy Last Code")     => copy_last_code_block(app),
                 Some("Undo Last Message")  => undo_message(app).await?,
                 Some("Help")               => open_dialog(app, ActiveDialog::Help),
                 Some("Open Folder")        => open_folder_browser(app),
@@ -2206,7 +2275,9 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
         }
     };
 
-    for call in &calls {
+    let mut i = 0;
+    while i < calls.len() {
+        let call = &calls[i];
         // Plan-mode: block write/shell tools
         if let Some(ref allowed) = plan_mode_tools {
             if !allowed.contains(&call.name) {
@@ -2218,8 +2289,40 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
                     call.name, call.name
                 );
                 result_parts.push(blocked_result);
+                i += 1;
                 continue;
             }
+        }
+
+        // ── Change review for write_file / edit_file ──────────────────────────
+        // Batch a run of consecutive edit calls into one reviewable changeset and
+        // hand off to the full-screen reviewer. Non-edit calls resume after review.
+        if call.name == "write_file" || call.name == "edit_file" {
+            let mut entries: Vec<ChangeEntry> = Vec::new();
+            let mut j = i;
+            while j < calls.len() && (calls[j].name == "write_file" || calls[j].name == "edit_file") {
+                if let Some(entry) = build_change_entry(&calls[j], &app.working_dir) {
+                    entries.push(entry);
+                }
+                j += 1;
+            }
+            if entries.is_empty() {
+                i = j;
+                continue;
+            }
+            let remaining: Vec<_> = calls[j..].to_vec();
+            app.changeset = Some(Changeset {
+                entries,
+                remaining_calls: remaining,
+                results: Vec::new(),
+            });
+            app.review_open   = true;
+            app.review_view   = ReviewView::Overview;
+            app.review_cursor = 0;
+            app.review_scroll = 0;
+            app.scroll_stick_bottom = true;
+            app.streaming = false;
+            return Ok(());
         }
 
         // Show plan progress in the toast if a plan is active
@@ -2233,39 +2336,6 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
             format!("⚙  {}", call.name)
         };
         app.push_toast(crate::ui::components::toast::Toast::info(toast_label));
-
-        // ── Diff approval for write_file / edit_file ──────────────────────────
-        if call.name == "write_file" || call.name == "edit_file" {
-            let (file_path, proposed, old_text, new_text) = extract_diff_info(call, &app.working_dir);
-            if let Some(fp) = file_path {
-                let diff_lines = compute_diff_lines(&fp, &proposed, old_text.as_deref(), new_text.as_deref());
-                let diff_part = crate::session::message::DiffProposalPart::new(
-                    &call.id, &call.name, &fp, &proposed,
-                    old_text.clone(), new_text.clone(), diff_lines,
-                );
-                // Add the diff inline to the current assistant message
-                if let Some(msg) = app.messages.iter_mut().rev()
-                    .find(|m| m.role == crate::session::message::Role::Assistant)
-                {
-                    msg.parts.push(crate::session::message::Part::Diff(diff_part));
-                    let _ = crate::db::update_message_parts(&app.db, msg);
-                }
-                // Stash remaining calls and pause for user input
-                let call_idx = calls.iter().position(|c| c.id == call.id).unwrap_or(0);
-                let remaining: Vec<_> = calls[call_idx + 1..].to_vec();
-                app.pending_diff = Some(PendingDiff {
-                    call: call.clone(),
-                    file_path: fp,
-                    proposed,
-                    old_text,
-                    new_text,
-                    remaining_calls: remaining,
-                });
-                app.scroll_stick_bottom = true;
-                app.streaming = false;
-                return Ok(());
-            }
-        }
 
         // Execute — route shell through sandbox if enabled
         let result = if call.name == "shell" && app.sandbox_enabled {
@@ -2319,6 +2389,7 @@ async fn execute_pending_tools(app: &mut App) -> anyhow::Result<()> {
             "<tool_result>\n<name>{}</name>\n<status>{}</status>\n<output>\n{}\n</output>\n</tool_result>",
             call.name, status, content.trim()
         ));
+        i += 1;
     }
 
     let results_text = result_parts.join("\n\n");
@@ -2505,9 +2576,34 @@ fn suggest_tool_for_step(step: &str) -> &'static str {
 
 /// Fix 1 — Tool enforcer: model said it would act but issued no tool calls.
 /// Inject a short correction message and re-stream with low temperature.
+/// Pull a likely target filename (e.g. "test.py") out of a free-text request.
+fn extract_target_filename(text: &str) -> Option<String> {
+    text.split(|c: char| c.is_whitespace() || "`\"'(),:;".contains(c))
+        .map(|t| t.trim_matches(|c: char| c == '`' || c == '.'))
+        .find(|t| {
+            match t.rfind('.') {
+                Some(dot) if dot > 0 && dot + 1 < t.len() => {
+                    let ext  = &t[dot + 1..];
+                    let stem = &t[..dot];
+                    ext.len() <= 5
+                        && ext.chars().all(|c| c.is_ascii_alphanumeric())
+                        && stem.chars().all(|c| c.is_ascii_alphanumeric() || "_-/.".contains(c))
+                }
+                _ => false,
+            }
+        })
+        .map(|s| s.to_string())
+}
+
 async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
     if app.tool_iterations >= 15 { return Ok(()); }
     app.tool_iterations += 1;
+
+    // Did the model just print code instead of saving it?
+    let last_assistant_had_code = app.messages.iter().rev()
+        .find(|m| m.role == Role::Assistant)
+        .map(|m| m.text_content().contains("```"))
+        .unwrap_or(false);
 
     // Build a targeted correction — if a plan is active, name the exact next step.
     let correction = if !app.active_plan.is_empty() && app.plan_step < app.active_plan.len() {
@@ -2518,8 +2614,22 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
              Use the `{}` tool to complete this step.",
             app.plan_step + 1, app.active_plan.len(), next, tool_hint
         )
+    } else if last_assistant_had_code {
+        // The model wrote code but didn't save it — and small models often name the
+        // tool after the FILE ("<name>test.py</name>"). Give an exact template.
+        let fname = app.messages.iter().rev()
+            .filter(|m| m.role == Role::User && !m.hidden)
+            .find(|m| !m.text_content().starts_with("<tool_result>"))
+            .and_then(|m| extract_target_filename(&m.text_content()))
+            .unwrap_or_else(|| "the_file.py".to_string());
+        format!(
+            "You wrote code but did not save it. Reply with ONLY this tool call and nothing else. \
+             The tool name must be exactly write_file — NOT the filename:\n\
+             <tool_call>\n<name>write_file</name>\n<parameters>{{\"path\": \"{}\", \"content\": \"<full code here>\"}}</parameters>\n</tool_call>",
+            fname
+        )
     } else {
-        "Please go ahead and call the appropriate tool to complete this task.".to_string()
+        "Please go ahead and call the appropriate tool to complete this task. Respond with only the tool call.".to_string()
     };
     let mut enforcer_msg = Message::new_user(&app.session_id, &correction);
     enforcer_msg.hidden = true;
@@ -2610,83 +2720,210 @@ async fn fire_tool_enforcer(app: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Apply the pending diff — execute the write then continue the tool loop.
-async fn apply_pending_diff(app: &mut App) -> anyhow::Result<()> {
-    let diff = match app.pending_diff.take() {
-        Some(d) => d,
-        None    => return Ok(()),
-    };
+/// Build a reviewable change entry from a write_file / edit_file call.
+fn build_change_entry(call: &crate::tools::ToolCall, cwd: &std::path::Path) -> Option<ChangeEntry> {
+    use crate::session::message::DiffLineKind;
+    let (file_path, proposed, old_text, new_text) = extract_diff_info(call, cwd);
+    let fp = file_path?;
+    let existed = std::fs::read_to_string(&fp).map(|s| !s.is_empty()).unwrap_or(false);
+    let diff_lines = compute_diff_lines(&fp, &proposed, old_text.as_deref(), new_text.as_deref());
+    let added   = diff_lines.iter().filter(|d| d.kind == DiffLineKind::Added).count();
+    let removed = diff_lines.iter().filter(|d| d.kind == DiffLineKind::Removed).count();
+    Some(ChangeEntry {
+        call:      call.clone(),
+        file_path: fp,
+        tool_name: call.name.clone(),
+        is_new:    !existed,
+        diff_lines,
+        added,
+        removed,
+        status:    ChangeStatus::Pending,
+    })
+}
 
-    // Mark the DiffProposal part as Approved
-    use crate::session::message::{Part, DiffProposalState};
-    if let Some(msg) = app.messages.iter_mut().rev()
-        .find(|m| m.role == crate::session::message::Role::Assistant)
-    {
-        for part in &mut msg.parts {
-            if let Part::Diff(dp) = part {
-                if dp.call_id == diff.call.id {
-                    dp.state = DiffProposalState::Approved;
-                }
-            }
-        }
-        let _ = crate::db::update_message_parts(&app.db, msg);
+/// Key handling for the full-screen change reviewer.
+async fn handle_review_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Result<bool> {
+    use crossterm::event::KeyCode;
+
+    // Quit is always honored
+    if let Some(crate::keybinds::Action::Quit) = app.keybinds.resolve(&key).cloned() {
+        let _ = crate::config::save(&app.config);
+        return Ok(true);
     }
 
-    // Execute the actual write
-    let result = crate::tools::execute(&diff.call, &app.working_dir, &app.http_client, &app.db).await;
+    let file_count = app.changeset.as_ref().map(|c| c.entries.len()).unwrap_or(0);
+    if file_count == 0 { app.review_open = false; return Ok(false); }
+
+    match app.review_view {
+        ReviewView::Overview => match key.code {
+            KeyCode::Up   | KeyCode::Char('k') => {
+                app.review_cursor = app.review_cursor.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if app.review_cursor + 1 < file_count { app.review_cursor += 1; }
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                app.review_view = ReviewView::File;
+                app.review_scroll = 0;
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => { apply_changeset_all(app).await?; }
+            KeyCode::Char('d') | KeyCode::Char('D') => { discard_changeset_all(app).await?; }
+            KeyCode::Esc => { app.review_open = false; } // defer — Ctrl+R reopens
+            _ => {}
+        },
+        ReviewView::File => match key.code {
+            KeyCode::Up   | KeyCode::Char('k') => {
+                app.review_scroll = app.review_scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.review_scroll = app.review_scroll.saturating_add(1);
+            }
+            KeyCode::Char('[') | KeyCode::Left | KeyCode::Char('h') => {
+                app.review_cursor = app.review_cursor.saturating_sub(1);
+                app.review_scroll = 0;
+            }
+            KeyCode::Char(']') | KeyCode::Right | KeyCode::Char('l') => {
+                if app.review_cursor + 1 < file_count { app.review_cursor += 1; app.review_scroll = 0; }
+            }
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let idx = app.review_cursor;
+                apply_changeset_file(app, idx).await?;
+                advance_review_cursor(app);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                let idx = app.review_cursor;
+                skip_changeset_file(app, idx);
+                maybe_finalize_changeset(app).await?;
+                advance_review_cursor(app);
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => { apply_changeset_all(app).await?; }
+            KeyCode::Esc => { app.review_view = ReviewView::Overview; }
+            _ => {}
+        },
+    }
+    Ok(false)
+}
+
+/// After resolving a file, jump the cursor to the next still-pending file.
+fn advance_review_cursor(app: &mut App) {
+    if let Some(cs) = app.changeset.as_ref() {
+        if let Some(next) = cs.first_pending() {
+            app.review_cursor = next;
+            app.review_scroll = 0;
+        }
+    }
+}
+
+/// Execute one file's write, record the receipt, mark it applied.
+async fn apply_changeset_file(app: &mut App, idx: usize) -> anyhow::Result<()> {
+    let call = {
+        let Some(cs) = app.changeset.as_ref() else { return Ok(()); };
+        let Some(entry) = cs.entries.get(idx) else { return Ok(()); };
+        if entry.status != ChangeStatus::Pending { return Ok(()); }
+        entry.call.clone()
+    };
+
+    let result = crate::tools::execute(&call, &app.working_dir, &app.http_client, &app.db).await;
+    let is_error = result.is_error;
+    let output   = if is_error { result.error.clone().unwrap_or_default() } else { result.output.clone() };
 
     let tool_result_str = format!(
         "<tool_result>\n<name>{}</name>\n<status>{}</status>\n<output>\n{}\n</output>\n</tool_result>",
-        diff.call.name,
-        if result.is_error { "error" } else { "ok" },
-        if result.is_error { result.error.unwrap_or_default() } else { result.output },
+        call.name, if is_error { "error" } else { "ok" }, output,
     );
+    // The tool trace line on the message acts as the river receipt.
+    append_diff_result_to_message(app, &call.id, &call.name, &tool_result_str, is_error);
 
-    // Inject result and continue remaining tool calls
-    // Queue remaining calls then continue the existing tool loop
-    let remaining = diff.remaining_calls;
-    app.pending_tool_calls = remaining;
+    if let Some(cs) = app.changeset.as_mut() {
+        if let Some(entry) = cs.entries.get_mut(idx) {
+            entry.status = if is_error { ChangeStatus::Skipped } else { ChangeStatus::Applied };
+            app.changes_log.push(ChangeLogEntry {
+                file_path: entry.file_path.clone(),
+                added:     entry.added,
+                removed:   entry.removed,
+                status:    entry.status,
+            });
+        }
+        cs.results.push(tool_result_str);
+    }
 
-    // Append the tool result to the last assistant message so the model
-    // sees it naturally when the tool loop re-fires — no fake user message
-    append_diff_result_to_message(app, &diff.call.id, &diff.call.name, &tool_result_str, false);
+    maybe_finalize_changeset(app).await
+}
 
-    // If more tool calls remain, the tool loop will pick them up.
-    // Do NOT fire the enforcer after a diff approval — the model already
-    // called the tool, the write happened, continuation is natural.
-    app.tool_enforcer_pending = false;
-    app.streaming = false;
+/// Mark one file skipped and record a declined result for the model.
+fn skip_changeset_file(app: &mut App, idx: usize) {
+    if let Some(cs) = app.changeset.as_mut() {
+        if let Some(entry) = cs.entries.get_mut(idx) {
+            if entry.status != ChangeStatus::Pending { return; }
+            entry.status = ChangeStatus::Skipped;
+            let declined = format!(
+                "<tool_result>\n<name>{}</name>\n<status>error</status>\n<output>\nUser skipped the proposed change to {}. Do not retry this write.\n</output>\n</tool_result>",
+                entry.tool_name, entry.file_path,
+            );
+            app.changes_log.push(ChangeLogEntry {
+                file_path: entry.file_path.clone(),
+                added:     entry.added,
+                removed:   entry.removed,
+                status:    ChangeStatus::Skipped,
+            });
+            cs.results.push(declined);
+        }
+    }
+}
+
+/// Apply every still-pending file, then finalize.
+async fn apply_changeset_all(app: &mut App) -> anyhow::Result<()> {
+    loop {
+        let next = app.changeset.as_ref().and_then(|c| c.first_pending());
+        match next {
+            Some(idx) => { apply_changeset_file(app, idx).await?; }
+            None => break,
+        }
+        if app.changeset.is_none() { break; } // finalized mid-loop
+    }
     Ok(())
 }
 
-/// Discard the pending diff — tell the model it was denied.
-async fn discard_pending_diff(app: &mut App) -> anyhow::Result<()> {
-    let diff = match app.pending_diff.take() {
-        Some(d) => d,
-        None    => return Ok(()),
-    };
+/// Skip every still-pending file (decline the batch), then finalize.
+async fn discard_changeset_all(app: &mut App) -> anyhow::Result<()> {
+    let pending: Vec<usize> = app.changeset.as_ref()
+        .map(|c| c.entries.iter().enumerate()
+            .filter(|(_, e)| e.status == ChangeStatus::Pending)
+            .map(|(i, _)| i).collect())
+        .unwrap_or_default();
+    for idx in pending { skip_changeset_file(app, idx); }
+    maybe_finalize_changeset(app).await
+}
 
-    use crate::session::message::{Part, DiffProposalState};
-    if let Some(msg) = app.messages.iter_mut().rev()
-        .find(|m| m.role == crate::session::message::Role::Assistant)
-    {
-        for part in &mut msg.parts {
-            if let Part::Diff(dp) = part {
-                if dp.call_id == diff.call.id {
-                    dp.state = DiffProposalState::Discarded;
-                }
-            }
-        }
-        let _ = crate::db::update_message_parts(&app.db, msg);
+/// If no files remain pending, push results back to the model and resume.
+async fn maybe_finalize_changeset(app: &mut App) -> anyhow::Result<()> {
+    let done = app.changeset.as_ref().map(|c| c.pending_count() == 0).unwrap_or(false);
+    if !done { return Ok(()); }
+
+    let Some(cs) = app.changeset.take() else { return Ok(()); };
+    app.review_open = false;
+    app.review_view = ReviewView::Overview;
+
+    let applied = cs.entries.iter().filter(|e| e.status == ChangeStatus::Applied).count();
+    let skipped = cs.entries.iter().filter(|e| e.status == ChangeStatus::Skipped).count();
+
+    if applied > 0 {
+        let a: usize = cs.entries.iter().filter(|e| e.status == ChangeStatus::Applied).map(|e| e.added).sum();
+        let r: usize = cs.entries.iter().filter(|e| e.status == ChangeStatus::Applied).map(|e| e.removed).sum();
+        app.push_toast(crate::ui::components::toast::Toast::success(
+            format!("Applied {} file{} · +{} −{}", applied, if applied == 1 { "" } else { "s" }, a, r),
+        ));
+    } else if skipped > 0 {
+        app.push_toast(crate::ui::components::toast::Toast::info(
+            format!("Discarded {} change{}", skipped, if skipped == 1 { "" } else { "s" }),
+        ));
     }
 
-    let denied = format!("User declined the proposed change to {}. Do not retry this write.", diff.call.name);
-    append_diff_result_to_message(app, &diff.call.id, &diff.call.name, &denied, true);
-
-    app.pending_tool_calls.clear();
-    app.tool_enforcer_pending = true;
+    // Resume any non-edit calls the model queued after the edits.
+    app.pending_tool_calls = cs.remaining_calls;
+    // Edits were declined → nudge the model to reconsider rather than re-write.
+    app.tool_enforcer_pending = applied == 0 && skipped > 0 && app.pending_tool_calls.is_empty();
     app.streaming = false;
-    app.push_toast(crate::ui::components::toast::Toast::info("Change discarded."));
     Ok(())
 }
 
@@ -2994,6 +3231,43 @@ fn copy_last_message(app: &mut App) {
     if let Ok(mut cb) = arboard::Clipboard::new() {
         let _ = cb.set_text(text);
         app.push_toast(crate::ui::components::toast::Toast::success("Copied to clipboard"));
+    }
+}
+
+/// Copy the last fenced code block from the most recent assistant message.
+fn copy_last_code_block(app: &mut App) {
+    let text = app.messages.iter().rev()
+        .find(|m| m.role == Role::Assistant)
+        .map(|m| m.text_content())
+        .unwrap_or_default();
+
+    // Walk fenced ``` blocks, keep the last one's body
+    let mut last: Option<String> = None;
+    let mut in_block = false;
+    let mut buf = String::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            if in_block {
+                last = Some(std::mem::take(&mut buf));
+                in_block = false;
+            } else {
+                in_block = true;
+                buf.clear();
+            }
+        } else if in_block {
+            buf.push_str(line);
+            buf.push('\n');
+        }
+    }
+
+    match last {
+        Some(code) if !code.trim().is_empty() => {
+            if let Ok(mut cb) = arboard::Clipboard::new() {
+                let _ = cb.set_text(code.trim_end().to_string());
+                app.push_toast(crate::ui::components::toast::Toast::success("Code block copied"));
+            }
+        }
+        _ => app.push_toast(crate::ui::components::toast::Toast::warning("No code block found")),
     }
 }
 

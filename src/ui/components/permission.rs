@@ -1,22 +1,27 @@
-/// Permission prompt — replaces input area when a tool requests approval.
+/// Permission prompt — replaces the input area when a tool requests approval.
+/// Restyled to match the reviewer: thin rounded frame, command shown in a
+/// tinted card, decision rendered as chip buttons.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let Some(req) = &app.pending_permission else { return };
+    let theme = &app.theme;
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(app.theme.warning))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.warning))
         .title(Line::from(vec![
-            Span::styled(" ⚠ Permission Required ", Style::default().fg(app.theme.warning).add_modifier(Modifier::BOLD)),
+            Span::styled(" ⚠ Permission ", Style::default().fg(theme.bg).bg(theme.warning).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" {} ", req.tool), Style::default().fg(theme.warning).add_modifier(Modifier::BOLD)),
         ]))
-        .style(Style::default().bg(app.theme.bg_panel));
+        .style(Style::default().bg(theme.bg_panel));
 
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
@@ -25,46 +30,51 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
         .split(inner);
 
-    // Tool + description
-    let desc_para = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled(format!(" Tool:   {}", req.tool), Style::default().fg(app.theme.text)),
-        ]),
-        Line::from(vec![
-            Span::styled(format!(" Action: {}", req.detail), Style::default().fg(app.theme.text_muted)),
-        ]),
-    ]);
-    frame.render_widget(desc_para, chunks[0]);
+    // Action summary line
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" wants to ", Style::default().fg(theme.text_muted)),
+            Span::styled(req.detail.clone(), Style::default().fg(theme.text)),
+        ])),
+        chunks[0],
+    );
 
-    // Diff or command preview
+    // Command / diff preview in a tinted card
     let preview = req.diff.as_deref().unwrap_or(req.detail.as_str());
     if !preview.is_empty() {
-        let cmd_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(app.theme.border))
-            .style(Style::default().bg(app.theme.bg_element));
-        let cmd_inner = cmd_block.inner(chunks[1]);
-        frame.render_widget(cmd_block, chunks[1]);
-
-        let lines: Vec<Line<'static>> = preview.lines().take(6).map(|l| {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(theme.bg_element)),
+            chunks[1],
+        );
+        let card_inner = Rect {
+            x: chunks[1].x + 1, y: chunks[1].y,
+            width: chunks[1].width.saturating_sub(2), height: chunks[1].height,
+        };
+        let lines: Vec<Line<'static>> = preview.lines().take(card_inner.height as usize).map(|l| {
             Line::from(vec![
-                Span::styled(l.to_string(), Style::default().fg(app.theme.accent)),
+                Span::styled("│ ", Style::default().fg(theme.warning)),
+                Span::styled(l.to_string(), Style::default().fg(theme.accent)),
             ])
         }).collect();
-        frame.render_widget(Paragraph::new(lines), cmd_inner);
+        frame.render_widget(Paragraph::new(lines), card_inner);
     }
 
-    // Buttons hint
-    let btn_line = Line::from(vec![
-        Span::styled(" [y] Allow once  ", Style::default().fg(app.theme.success).add_modifier(Modifier::BOLD)),
-        Span::styled("[a] Allow always  ", Style::default().fg(app.theme.primary)),
-        Span::styled("[n] Deny ", Style::default().fg(app.theme.error)),
-    ]);
-    frame.render_widget(Paragraph::new(btn_line), chunks[2]);
+    // Chip buttons
+    let chip = |key: &'static str, label: &'static str, color: ratatui::style::Color| -> Vec<Span<'static>> {
+        vec![
+            Span::styled(format!(" {} ", key), Style::default().fg(theme.bg).bg(color).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" {}   ", label), Style::default().fg(color)),
+        ]
+    };
+    let mut btns = vec![Span::styled(" ", Style::default())];
+    btns.extend(chip("y", "allow once", theme.success));
+    btns.extend(chip("a", "allow always", theme.primary));
+    btns.extend(chip("n", "deny", theme.error));
+    frame.render_widget(Paragraph::new(Line::from(btns)), chunks[2]);
 }

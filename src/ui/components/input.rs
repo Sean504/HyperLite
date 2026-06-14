@@ -1,10 +1,10 @@
-/// Input area using tui-textarea.
+/// Input area using tui-textarea, wrapped in a thin rounded frame.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::{Block, BorderType, Borders};
 use crate::app::App;
 
 const PLACEHOLDERS: &[&str] = &[
@@ -25,29 +25,29 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.theme.border_hi
     };
 
-    // Title — streaming phase label, spinner, or static "message" label
-    let title_left = if is_streaming {
+    // Title — streaming phase/spinner, or a small label chip
+    let title = if is_streaming {
         let label = if !app.stream_status.is_empty() {
-            format!(" {} {} ", app.spinner.current(), app.stream_status.trim())
+            format!(" {} {} ", app.spinner.current_for(app.theme.name), app.stream_status.trim())
         } else {
-            format!(" {} generating… ", app.spinner.current())
+            format!(" {} generating… ", app.spinner.current_for(app.theme.name))
         };
-        Line::from(vec![
-            Span::styled(
-                label,
-                Style::default().fg(app.theme.warning).add_modifier(Modifier::BOLD),
-            ),
-        ])
+        Line::from(vec![Span::styled(
+            label,
+            Style::default().fg(app.theme.warning).add_modifier(Modifier::BOLD),
+        )])
     } else {
-        Line::from(vec![
-            Span::styled(" message ", Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD)),
-        ])
+        Line::from(vec![Span::styled(
+            " ▸ msg ",
+            Style::default().fg(app.theme.primary).add_modifier(Modifier::BOLD),
+        )])
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
-        .title(title_left)
+        .title(title)
         .style(Style::default().bg(app.theme.bg_panel));
 
     if is_empty && !is_streaming {
@@ -70,15 +70,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.textarea.set_style(Style::default().fg(app.theme.text).bg(app.theme.bg_panel));
 
         if is_streaming {
-            // Hide cursor while model is responding
             app.textarea.set_cursor_style(Style::default().bg(app.theme.bg_panel).fg(app.theme.bg_panel));
             app.textarea.set_cursor_line_style(Style::default());
         } else {
-            // Blink: visible half the time
             let cursor_style = if app.cursor_blink_on {
                 Style::default().fg(app.theme.bg).bg(app.theme.accent)
             } else {
-                // Invisible — same color as background
                 Style::default().fg(app.theme.bg_panel).bg(app.theme.bg_panel)
             };
             app.textarea.set_cursor_style(cursor_style);

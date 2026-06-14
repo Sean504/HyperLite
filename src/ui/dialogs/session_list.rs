@@ -42,7 +42,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let query = &app.dialog_search_query;
     let search_line = Line::from(vec![
-        Span::styled(" 🔍 ", Style::default().fg(app.theme.accent)),
+        Span::styled(" / ", Style::default().fg(app.theme.accent)),
         Span::styled(query.clone(), Style::default().fg(app.theme.text)),
         Span::styled("█", Style::default().fg(app.theme.accent)),
     ]);

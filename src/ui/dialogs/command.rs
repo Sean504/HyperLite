@@ -60,6 +60,7 @@ pub fn commands_for_tab(tab: usize) -> Vec<Command> {
         3 => vec![
             Command { label: "Open in Editor",   desc: "Edit input in $EDITOR",       shortcut: "Ctrl+E" },
             Command { label: "Copy Last Response",desc: "Copy assistant message",     shortcut: "Ctrl+C" },
+            Command { label: "Copy Last Code",    desc: "Copy last code block",       shortcut: "" },
             Command { label: "Undo Last Message", desc: "Remove last exchange",       shortcut: "Ctrl+Z" },
             Command { label: "Help",              desc: "Shortcuts, indexing, agents, tools reference",  shortcut: "Ctrl+H" },
             Command { label: "Quit",              desc: "Exit HyperLite",             shortcut: "Ctrl+X" },

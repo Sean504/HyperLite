@@ -5,6 +5,7 @@ pub mod syntax;
 pub mod components;
 pub mod dialogs;
 pub mod pentest;
+pub mod review;
 
 use ratatui::Frame;
 use crate::app::App;
@@ -14,6 +15,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Pen test mode takes over the entire screen
     if app.pentest_mode {
         pentest::draw(frame, app);
+        return;
+    }
+
+    // Full-screen change reviewer takes over when open
+    if app.review_open && app.changeset.is_some() {
+        review::draw(frame, app);
         return;
     }
 

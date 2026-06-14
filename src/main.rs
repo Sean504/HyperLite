@@ -143,6 +143,9 @@ async fn run_app() -> anyhow::Result<()> {
     terminal.draw(|f| startup::render_booting(f, &boot_steps, "Loading…"))?;
     let available_models = registry.all_models().await;
 
+    // ── POST typewriter — fake-BIOS self-test, skippable on any key ──────────
+    startup::play_post(&mut terminal, &boot_steps)?;
+
     // ── Pick current model ─────────────────────────────────────────────────────
     // If there's exactly one model always use it. If config has a remembered
     // model and it still exists use that. Otherwise fall back to first available.
@@ -214,6 +217,11 @@ async fn run_app() -> anyhow::Result<()> {
         help_tab:            0,
 
         hardware,
+        live_sys:         sysinfo::System::new(),
+        live_cpu_pct:     0.0,
+        live_ram_used_mb: 0,
+        live_stat_tick:   0,
+        anim_tick:        0,
 
         project_context_active,
         project_ctx,
@@ -239,7 +247,12 @@ async fn run_app() -> anyhow::Result<()> {
         dialog_selected_idx: 0,
 
         pending_permission: None,
-        pending_diff:       None,
+        changeset:          None,
+        review_open:        false,
+        review_view:        crate::app::ReviewView::Overview,
+        review_cursor:      0,
+        review_scroll:      0,
+        changes_log:        Vec::new(),
         sandbox_enabled:    false,
         bwrap_install_log:  vec![],
         bwrap_installing:   false,

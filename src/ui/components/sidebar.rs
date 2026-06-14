@@ -16,6 +16,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     // ── Heights ────────────────────────────────────────────────────────────────
+    // Mascot: pixel robot at the top — only when the terminal is tall enough
+    let mascot_h   = if inner.height >= 34 { super::mascot::PANEL_HEIGHT } else { 0 };
     // Sessions: fixed compact block (~¼ of typical terminal height, min 4)
     let session_h  = (inner.height / 4).max(4).min(12);
     // Bottom fixed sections
@@ -25,12 +27,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let bottom_h   = folder_h + model_h + hardware_h;
     // Plan panel gets everything in between
     let plan_h = inner.height
+        .saturating_sub(mascot_h)
         .saturating_sub(session_h)
         .saturating_sub(bottom_h);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(mascot_h),
             Constraint::Length(session_h),
             Constraint::Length(plan_h.max(4)),
             Constraint::Length(folder_h),
@@ -39,11 +43,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ])
         .split(inner);
 
-    render_sessions(frame, chunks[0], app);
-    render_plan_panel(frame, chunks[1], app);
-    render_folder(frame, chunks[2], app);
-    render_model_info(frame, chunks[3], app);
-    render_hardware(frame, chunks[4], app);
+    if mascot_h > 0 {
+        super::mascot::render(frame, chunks[0], app);
+    }
+    render_sessions(frame, chunks[1], app);
+    render_plan_panel(frame, chunks[2], app);
+    render_folder(frame, chunks[3], app);
+    render_model_info(frame, chunks[4], app);
+    render_hardware(frame, chunks[5], app);
 }
 
 // ── Sessions (compact) ────────────────────────────────────────────────────────
@@ -79,6 +86,13 @@ fn render_sessions(frame: &mut Frame, area: Rect, app: &App) {
 fn render_plan_panel(frame: &mut Frame, area: Rect, app: &App) {
     if area.height < 3 { return; }
 
+    // Changes cockpit takes priority: a pending changeset, or this session's
+    // applied/skipped history, is the most useful thing to surface here.
+    if app.changeset.is_some() || !app.changes_log.is_empty() {
+        render_changes(frame, area, app);
+        return;
+    }
+
     let has_plan = !app.active_plan.is_empty();
 
     let title = if has_plan {
@@ -109,6 +123,82 @@ fn render_plan_panel(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         render_tool_history(frame, inner, app);
     }
+}
+
+// ── Changes cockpit ───────────────────────────────────────────────────────────
+
+fn render_changes(frame: &mut Frame, area: Rect, app: &App) {
+    use crate::app::ChangeStatus;
+
+    // Title with running totals
+    let (added, removed): (usize, usize) = {
+        let mut a = app.changes_log.iter().map(|c| c.added).sum::<usize>();
+        let mut r = app.changes_log.iter().map(|c| c.removed).sum::<usize>();
+        if let Some(cs) = &app.changeset { a += cs.total_added(); r += cs.total_removed(); }
+        (a, r)
+    };
+    let title = Line::from(vec![
+        Span::styled(" Changes ", Style::default().fg(app.theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("+{} ", added), Style::default().fg(app.theme.diff_add_fg)),
+        Span::styled(format!("−{} ", removed), Style::default().fg(app.theme.diff_del_fg)),
+    ]);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(app.theme.border));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let row = |path: &str, added: usize, removed: usize, marker: &str, mstyle: Style, width: u16| -> Line<'static> {
+        let name = std::path::Path::new(path).file_name()
+            .and_then(|n| n.to_str()).unwrap_or(path);
+        let counts = format!(" +{} −{}", added, removed);
+        let name_w = (width as usize).saturating_sub(2 + counts.chars().count());
+        Line::from(vec![
+            Span::styled(marker.to_string(), mstyle),
+            Span::styled(format!("{:<width$}", truncate(name, name_w), width = name_w.max(1)),
+                Style::default().fg(app.theme.text_muted)),
+            Span::styled(format!("+{}", added), Style::default().fg(app.theme.diff_add_fg)),
+            Span::styled(format!(" −{}", removed), Style::default().fg(app.theme.diff_del_fg)),
+        ])
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let max_rows = inner.height as usize;
+
+    // Pending changeset entries first (most actionable)
+    if let Some(cs) = &app.changeset {
+        for e in &cs.entries {
+            if lines.len() >= max_rows { break; }
+            let (marker, mstyle) = match e.status {
+                ChangeStatus::Pending => ("⧖ ", Style::default().fg(app.theme.warning)),
+                ChangeStatus::Applied => ("✓ ", Style::default().fg(app.theme.success)),
+                ChangeStatus::Skipped => ("✗ ", Style::default().fg(app.theme.text_dim)),
+            };
+            lines.push(row(&e.file_path, e.added, e.removed, marker, mstyle, inner.width));
+        }
+    }
+
+    // Then the session history, most recent first
+    for c in app.changes_log.iter().rev() {
+        if lines.len() >= max_rows { break; }
+        let (marker, mstyle) = match c.status {
+            ChangeStatus::Applied => ("✓ ", Style::default().fg(app.theme.success)),
+            ChangeStatus::Skipped => ("✗ ", Style::default().fg(app.theme.text_dim)),
+            ChangeStatus::Pending => ("⧖ ", Style::default().fg(app.theme.warning)),
+        };
+        lines.push(row(&c.file_path, c.added, c.removed, marker, mstyle, inner.width));
+    }
+
+    if app.changeset.is_some() && !app.review_open {
+        if lines.len() < max_rows {
+            lines.push(Line::from(vec![
+                Span::styled(" Ctrl+R to review", Style::default().fg(app.theme.accent)),
+            ]));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_plan_steps(frame: &mut Frame, area: Rect, app: &App) {
@@ -318,37 +408,56 @@ fn render_hardware(frame: &mut Frame, area: Rect, app: &App) {
     let hw = &app.hardware;
     let mut lines: Vec<Line<'static>> = vec![];
 
-    lines.push(Line::from(vec![
-        Span::styled(" CPU ", Style::default().fg(app.theme.text_muted)),
-        Span::styled(
-            truncate(&hw.cpu.name, (inner.width as usize).saturating_sub(6)),
-            Style::default().fg(app.theme.text),
-        ),
-    ]));
+    // Live CPU gauge
+    let cpu_pct = app.live_cpu_pct.clamp(0.0, 100.0);
+    lines.push(gauge_line(" CPU ", (cpu_pct / 100.0) as f64, format!("{:>3.0}%", cpu_pct), app, inner.width));
 
-    let ram_gb = hw.memory.total_mb / 1024;
-    let unified = if hw.memory.is_unified { " unified" } else { "" };
-    lines.push(Line::from(vec![
-        Span::styled(" RAM ", Style::default().fg(app.theme.text_muted)),
-        Span::styled(format!("{} GB{}", ram_gb, unified), Style::default().fg(app.theme.text)),
-    ]));
+    // Live RAM gauge
+    let ram_total = hw.memory.total_mb.max(1);
+    let ram_used  = app.live_ram_used_mb.min(ram_total);
+    let ram_label = format!("{}/{}G", ram_used / 1024, ram_total / 1024);
+    lines.push(gauge_line(" RAM ", ram_used as f64 / ram_total as f64, ram_label, app, inner.width));
 
     for gpu in &hw.gpus {
         lines.push(Line::from(vec![
             Span::styled(" GPU ", Style::default().fg(app.theme.text_muted)),
             Span::styled(
-                truncate(&format!("{} ({}MB)", gpu.name, gpu.vram_total_mb), (inner.width as usize).saturating_sub(6)),
+                truncate(&format!("{} · {}G", gpu.name, gpu.vram_total_mb / 1024), (inner.width as usize).saturating_sub(6)),
                 Style::default().fg(app.theme.accent),
             ),
         ]));
     }
 
-    let rec = hw.recommendation_line();
     lines.push(Line::from(vec![
-        Span::styled(format!(" ⚡ {}", rec), Style::default().fg(app.theme.success)),
+        Span::styled(format!(" ⚡ {}", hw.recommendation_short()), Style::default().fg(app.theme.success)),
     ]));
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// One labelled block-char gauge row: ` CPU ▰▰▰▱▱▱▱▱ 34%`
+fn gauge_line(label: &'static str, ratio: f64, value: String, app: &App, width: u16) -> Line<'static> {
+    let ratio = ratio.clamp(0.0, 1.0);
+    // label(5) + space + value + space → remainder is the bar
+    let bar_w = (width as usize)
+        .saturating_sub(label.len() + value.chars().count() + 2)
+        .clamp(4, 14);
+    let filled = (ratio * bar_w as f64).round() as usize;
+
+    let fill_color = if ratio >= 0.85 {
+        app.theme.error
+    } else if ratio >= 0.6 {
+        app.theme.warning
+    } else {
+        app.theme.accent
+    };
+
+    Line::from(vec![
+        Span::styled(label, Style::default().fg(app.theme.text_muted)),
+        Span::styled("▰".repeat(filled), Style::default().fg(fill_color)),
+        Span::styled("▱".repeat(bar_w - filled), Style::default().fg(app.theme.text_dim)),
+        Span::styled(format!(" {}", value), Style::default().fg(app.theme.text)),
+    ])
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
