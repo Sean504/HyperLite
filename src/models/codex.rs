@@ -139,6 +139,32 @@ pub static CODEX: &[ModelFamily] = &[
     },
 
     ModelFamily {
+        name:         "Qwen3-Coder",
+        patterns:     &["qwen3-coder", "qwen3_coder", "qwen-3-coder"],
+        creator:      "Alibaba",
+        description:  "MoE coding specialist (30B total / 3B active). Best open-source agentic coder for multi-file edits and tool use.",
+        capabilities: &[Capability::Coding, Capability::ToolUse, Capability::Reasoning, Capability::DataAnalysis, Capability::LongContext],
+        quality:      QualityTier::Frontier,
+        context_tokens: 262144,
+        vram_q4:      &[(300, 18600)],
+        tool_calling: true,
+        reasoning_mode: false,
+    },
+
+    ModelFamily {
+        name:         "Devstral",
+        patterns:     &["devstral"],
+        creator:      "Mistral AI",
+        description:  "Agentic coding model built with All Hands AI to drive OpenHands. Strong at multi-file edits and debugging.",
+        capabilities: &[Capability::Coding, Capability::ToolUse, Capability::Reasoning, Capability::Chat],
+        quality:      QualityTier::Great,
+        context_tokens: 131072,
+        vram_q4:      &[(240, 14300)],
+        tool_calling: true,
+        reasoning_mode: false,
+    },
+
+    ModelFamily {
         name:         "DeepSeek-Coder-V2",
         patterns:     &["deepseek-coder-v2", "dscoder", "deepseek-coder"],
         creator:      "DeepSeek",
@@ -218,6 +244,19 @@ pub static CODEX: &[ModelFamily] = &[
         reasoning_mode: false,
     },
 
+    ModelFamily {
+        name:         "gpt-oss",
+        patterns:     &["gpt-oss", "gptoss", "gpt_oss"],
+        creator:      "OpenAI",
+        description:  "OpenAI's open-weight MoE. Strong reasoning and agentic tool use with configurable reasoning effort.",
+        capabilities: &[Capability::Reasoning, Capability::Coding, Capability::ToolUse, Capability::Math, Capability::Chat],
+        quality:      QualityTier::Frontier,
+        context_tokens: 131072,
+        vram_q4:      &[(210, 12100), (1170, 63000)],
+        tool_calling: true,
+        reasoning_mode: true,
+    },
+
     // ── GENERAL / WRITING ─────────────────────────────────────────────────────
 
     ModelFamily {
@@ -257,6 +296,19 @@ pub static CODEX: &[ModelFamily] = &[
         vram_q4:      &[(70, 4200), (87, 5500), (470, 29000)],
         tool_calling: true,
         reasoning_mode: false,
+    },
+
+    ModelFamily {
+        name:         "Qwen3",
+        patterns:     &["qwen3-", "qwen3_", "qwen-3-", "qwen3"],
+        creator:      "Alibaba",
+        description:  "Hybrid reasoning + instruct model. Toggle thinking on/off. 100+ languages, strong tool use, huge context.",
+        capabilities: &[Capability::Chat, Capability::Reasoning, Capability::Coding, Capability::Multilingual, Capability::ToolUse, Capability::LongContext],
+        quality:      QualityTier::Frontier,
+        context_tokens: 131072,
+        vram_q4:      &[(6, 600), (17, 1100), (40, 2500), (80, 4900), (140, 9000), (320, 19800)],
+        tool_calling: true,
+        reasoning_mode: true,
     },
 
     ModelFamily {
@@ -368,6 +420,19 @@ pub static CODEX: &[ModelFamily] = &[
     },
 
     // ── FAST / EDGE MODELS ────────────────────────────────────────────────────
+
+    ModelFamily {
+        name:         "SmolLM3",
+        patterns:     &["smollm3", "smol-lm3"],
+        creator:      "HuggingFace",
+        description:  "Fully-open 3B with dual reasoning modes. Punches above its weight; great for SBCs and edge.",
+        capabilities: &[Capability::Fast, Capability::Chat, Capability::Reasoning, Capability::Coding, Capability::ToolUse],
+        quality:      QualityTier::Good,
+        context_tokens: 65536,
+        vram_q4:      &[(30, 1900)],
+        tool_calling: true,
+        reasoning_mode: true,
+    },
 
     ModelFamily {
         name:         "SmolLM2",

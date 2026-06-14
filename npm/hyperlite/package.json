@@ -1,6 +1,6 @@
 {
   "name": "hyperlite-ai",
-  "version": "0.3.7",
+  "version": "0.4.1",
   "description": "Terminal-native local AI assistant — offline, GPU-accelerated, agentic. Runs any GGUF model locally with full tool use.",
   "keywords": ["local-ai", "local-llm", "offline-ai", "terminal-ai", "tui", "cli", "llm", "ollama", "llama-cpp", "gguf", "ai-agent", "agentic-ai", "ai-coding-assistant", "private-ai", "no-cloud", "gpu-inference", "cuda", "rust", "ai-chat", "code-generation", "chatgpt-alternative", "local-chatgpt", "ai-tools", "local-inference", "terminal", "chat"],
   "homepage": "https://hyperlite.org",
@@ -15,10 +15,10 @@
   },
   "files": ["bin/run.js"],
   "optionalDependencies": {
-    "@hyperlite-ai/linux-x64":    "0.3.7",
-    "@hyperlite-ai/win32-x64":    "0.3.7",
-    "@hyperlite-ai/darwin-arm64": "0.3.7",
-    "@hyperlite-ai/darwin-x64":   "0.3.7"
+    "@hyperlite-ai/linux-x64":    "0.4.1",
+    "@hyperlite-ai/win32-x64":    "0.4.1",
+    "@hyperlite-ai/darwin-arm64": "0.4.1",
+    "@hyperlite-ai/darwin-x64":   "0.4.1"
   },
   "engines": {
     "node": ">=16"

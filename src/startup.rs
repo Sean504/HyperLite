@@ -221,7 +221,31 @@ impl RecommendedModel {
     }
 }
 
+// Mirrors the picker's DOWNLOADABLE catalog (same verified repo/file pairs),
+// with VRAM/RAM budgets so first-run setup only offers models that fit.
 const RECOMMENDED_MODELS: &[RecommendedModel] = &[
+    // ── SBC / edge: Raspberry Pi, mini-PCs, CPU, laptops ───────────────────────
+    RecommendedModel {
+        display: "Qwen3 0.6B",
+        desc:    "Tiniest capable model. Runs on a Pi.",
+        hf_repo: "Qwen/Qwen3-0.6B-GGUF",
+        hf_file: "Qwen3-0.6B-Q8_0.gguf",
+        vram_mb: 900, ram_mb: 2000, tags: &["Fast", "CPU-OK"],
+    },
+    RecommendedModel {
+        display: "Gemma 3 1B",
+        desc:    "Google's featherweight. Snappy on edge devices.",
+        hf_repo: "ggml-org/gemma-3-1b-it-GGUF",
+        hf_file: "gemma-3-1b-it-Q4_K_M.gguf",
+        vram_mb: 1100, ram_mb: 2500, tags: &["Fast", "CPU-OK"],
+    },
+    RecommendedModel {
+        display: "Llama 3.2 1B",
+        desc:    "Meta's 1B. Ultra-fast on CPU and SBCs.",
+        hf_repo: "bartowski/Llama-3.2-1B-Instruct-GGUF",
+        hf_file: "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+        vram_mb: 1100, ram_mb: 2500, tags: &["Fast", "CPU-OK"],
+    },
     RecommendedModel {
         display: "SmolLM2 1.7B",
         desc:    "Tiny but capable. Runs anywhere.",
@@ -230,18 +254,18 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
         vram_mb: 1200, ram_mb: 3000, tags: &["Fast", "CPU-OK"],
     },
     RecommendedModel {
-        display: "Phi-4 Mini 3.8B",
-        desc:    "Microsoft's punchy small model. Great reasoning.",
-        hf_repo: "unsloth/Phi-4-mini-instruct-GGUF",
-        hf_file: "Phi-4-mini-instruct-Q4_K_M.gguf",
-        vram_mb: 2500, ram_mb: 6000, tags: &["Coding", "Reasoning"],
+        display: "Qwen3 1.7B",
+        desc:    "Compact hybrid-reasoning model.",
+        hf_repo: "Qwen/Qwen3-1.7B-GGUF",
+        hf_file: "Qwen3-1.7B-Q8_0.gguf",
+        vram_mb: 2200, ram_mb: 4000, tags: &["Reasoning", "CPU-OK"],
     },
     RecommendedModel {
-        display: "Qwen2.5 3B",
-        desc:    "Alibaba multilingual workhorse.",
-        hf_repo: "Qwen/Qwen2.5-3B-Instruct-GGUF",
-        hf_file: "qwen2.5-3b-instruct-q4_k_m.gguf",
-        vram_mb: 2200, ram_mb: 5000, tags: &["Writing", "Coding"],
+        display: "SmolLM3 3B",
+        desc:    "Fully-open 3B with reasoning. Beats older 3Bs.",
+        hf_repo: "ggml-org/SmolLM3-3B-GGUF",
+        hf_file: "SmolLM3-Q4_K_M.gguf",
+        vram_mb: 2400, ram_mb: 5000, tags: &["Reasoning", "CPU-OK"],
     },
     RecommendedModel {
         display: "Llama 3.2 3B",
@@ -251,12 +275,35 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
         vram_mb: 2400, ram_mb: 6000, tags: &["Writing", "Coding"],
     },
     RecommendedModel {
-        display: "Qwen2.5-Coder 7B",
-        desc:    "Best-in-class code model at 7B.",
-        hf_repo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-        hf_file: "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-        vram_mb: 5000, ram_mb: 10000, tags: &["Coding", "Best-Code"],
+        display: "Qwen2.5 3B",
+        desc:    "Alibaba multilingual workhorse.",
+        hf_repo: "Qwen/Qwen2.5-3B-Instruct-GGUF",
+        hf_file: "qwen2.5-3b-instruct-q4_k_m.gguf",
+        vram_mb: 2200, ram_mb: 5000, tags: &["Writing", "Coding"],
     },
+    RecommendedModel {
+        display: "Gemma 3 4B",
+        desc:    "On-device multimodal (text + image).",
+        hf_repo: "ggml-org/gemma-3-4b-it-GGUF",
+        hf_file: "gemma-3-4b-it-Q4_K_M.gguf",
+        vram_mb: 3200, ram_mb: 6000, tags: &["Vision", "Writing"],
+    },
+    RecommendedModel {
+        display: "Qwen3 4B",
+        desc:    "Remarkable for its size. Reasoning + tools.",
+        hf_repo: "Qwen/Qwen3-4B-GGUF",
+        hf_file: "Qwen3-4B-Q4_K_M.gguf",
+        vram_mb: 3200, ram_mb: 6000, tags: &["Reasoning", "Coding"],
+    },
+    RecommendedModel {
+        display: "Phi-4 Mini 3.8B",
+        desc:    "Microsoft's punchy small model. Great reasoning.",
+        hf_repo: "unsloth/Phi-4-mini-instruct-GGUF",
+        hf_file: "Phi-4-mini-instruct-Q4_K_M.gguf",
+        vram_mb: 2500, ram_mb: 6000, tags: &["Coding", "Reasoning"],
+    },
+
+    // ── Mid-range GPUs: 8-16 GB VRAM (3060 / 4060 / 4070 / 4080) ───────────────
     RecommendedModel {
         display: "Mistral 7B",
         desc:    "Fast and strong general-purpose.",
@@ -265,11 +312,39 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
         vram_mb: 5000, ram_mb: 10000, tags: &["Writing", "Fast"],
     },
     RecommendedModel {
+        display: "Qwen2.5-Coder 7B",
+        desc:    "Best-in-class small code model.",
+        hf_repo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+        hf_file: "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+        vram_mb: 5000, ram_mb: 10000, tags: &["Coding", "Best-Code"],
+    },
+    RecommendedModel {
         display: "Llama 3.1 8B",
-        desc:    "Meta's flagship 8B. Excellent instruction following.",
+        desc:    "Meta's flagship 8B. Excellent instructions.",
         hf_repo: "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
         hf_file: "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
         vram_mb: 5500, ram_mb: 12000, tags: &["Writing", "ToolUse"],
+    },
+    RecommendedModel {
+        display: "Qwen3 8B",
+        desc:    "Hybrid reasoning all-rounder. 100+ languages.",
+        hf_repo: "Qwen/Qwen3-8B-GGUF",
+        hf_file: "Qwen3-8B-Q4_K_M.gguf",
+        vram_mb: 5800, ram_mb: 12000, tags: &["Reasoning", "ToolUse"],
+    },
+    RecommendedModel {
+        display: "Gemma 3 12B",
+        desc:    "Google's mid multimodal. Superb writing.",
+        hf_repo: "ggml-org/gemma-3-12b-it-GGUF",
+        hf_file: "gemma-3-12b-it-Q4_K_M.gguf",
+        vram_mb: 8500, ram_mb: 16000, tags: &["Vision", "Writing"],
+    },
+    RecommendedModel {
+        display: "Qwen3 14B",
+        desc:    "Flagship-grade reasoning at 14B.",
+        hf_repo: "Qwen/Qwen3-14B-GGUF",
+        hf_file: "Qwen3-14B-Q4_K_M.gguf",
+        vram_mb: 10000, ram_mb: 20000, tags: &["Reasoning", "Coding"],
     },
     RecommendedModel {
         display: "Qwen2.5 14B",
@@ -279,13 +354,6 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
         vram_mb: 10000, ram_mb: 20000, tags: &["Writing", "Reasoning"],
     },
     RecommendedModel {
-        display: "DeepSeek-R1 14B",
-        desc:    "Chain-of-thought reasoning model.",
-        hf_repo: "bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF",
-        hf_file: "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
-        vram_mb: 10000, ram_mb: 20000, tags: &["Reasoning", "Math"],
-    },
-    RecommendedModel {
         display: "Qwen2.5-Coder 14B",
         desc:    "Top coding model for mid-range GPUs.",
         hf_repo: "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",
@@ -293,15 +361,73 @@ const RECOMMENDED_MODELS: &[RecommendedModel] = &[
         vram_mb: 10000, ram_mb: 20000, tags: &["Coding", "Best-Code"],
     },
     RecommendedModel {
+        display: "DeepSeek-R1 14B",
+        desc:    "Chain-of-thought reasoning model.",
+        hf_repo: "bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+        hf_file: "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+        vram_mb: 10000, ram_mb: 20000, tags: &["Reasoning", "Math"],
+    },
+    RecommendedModel {
+        display: "gpt-oss 20B",
+        desc:    "OpenAI open MoE. Reasoning + agentic tools.",
+        hf_repo: "ggml-org/gpt-oss-20b-GGUF",
+        hf_file: "gpt-oss-20b-mxfp4.gguf",
+        vram_mb: 13500, ram_mb: 24000, tags: &["Reasoning", "ToolUse"],
+    },
+    RecommendedModel {
+        display: "Mistral Small 3.2",
+        desc:    "24B instruct workhorse. Vision + tools.",
+        hf_repo: "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+        hf_file: "mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+        vram_mb: 15500, ram_mb: 28000, tags: &["Vision", "ToolUse"],
+    },
+    RecommendedModel {
+        display: "Devstral 24B",
+        desc:    "Agentic coding specialist (OpenHands).",
+        hf_repo: "unsloth/Devstral-Small-2507-GGUF",
+        hf_file: "Devstral-Small-2507-Q4_K_M.gguf",
+        vram_mb: 15500, ram_mb: 28000, tags: &["Coding", "Agentic"],
+    },
+    RecommendedModel {
+        display: "Qwen3-Coder 30B",
+        desc:    "MoE coder (3B active). Best open agentic coder.",
+        hf_repo: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+        hf_file: "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+        vram_mb: 20000, ram_mb: 36000, tags: &["Coding", "Best-Code"],
+    },
+
+    // ── High-end: 24-32 GB VRAM (3090 / 4090 / 5080 / 5090) ────────────────────
+    RecommendedModel {
+        display: "Gemma 3 27B",
+        desc:    "Best dense multimodal for a single 24GB card.",
+        hf_repo: "ggml-org/gemma-3-27b-it-GGUF",
+        hf_file: "gemma-3-27b-it-Q4_K_M.gguf",
+        vram_mb: 18000, ram_mb: 32000, tags: &["Vision", "Writing"],
+    },
+    RecommendedModel {
+        display: "Qwen3 32B",
+        desc:    "Flagship dense reasoning. Frontier-class.",
+        hf_repo: "Qwen/Qwen3-32B-GGUF",
+        hf_file: "Qwen3-32B-Q4_K_M.gguf",
+        vram_mb: 22000, ram_mb: 40000, tags: &["Reasoning", "Best-Reason"],
+    },
+    RecommendedModel {
+        display: "Qwen2.5-Coder 32B",
+        desc:    "Best open coder. Rivals frontier on code.",
+        hf_repo: "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
+        hf_file: "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+        vram_mb: 22000, ram_mb: 40000, tags: &["Coding", "Best-Code"],
+    },
+    RecommendedModel {
         display: "Qwen2.5 32B",
-        desc:    "Frontier-level quality for high-end GPUs.",
+        desc:    "Frontier-level general quality.",
         hf_repo: "bartowski/Qwen2.5-32B-Instruct-GGUF",
         hf_file: "Qwen2.5-32B-Instruct-Q4_K_M.gguf",
         vram_mb: 22000, ram_mb: 40000, tags: &["Writing", "Reasoning"],
     },
     RecommendedModel {
         display: "DeepSeek-R1 32B",
-        desc:    "Best open reasoning model.",
+        desc:    "Best open reasoning distill.",
         hf_repo: "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF",
         hf_file: "DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
         vram_mb: 22000, ram_mb: 40000, tags: &["Reasoning", "Best-Reason"],
