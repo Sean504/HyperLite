@@ -271,6 +271,25 @@ impl DirectGgufProvider {
     }
 }
 
+/// Locate the `ollama` binary. `which` misses it when PATH is sanitized
+/// (e.g. inside Nix shells, or when `hl` is launched from a minimal env),
+/// so fall back to common install locations before giving up.
+fn find_ollama() -> Option<PathBuf> {
+    if let Ok(p) = which::which("ollama") {
+        return Some(p);
+    }
+    let home = crate::startup::real_home_dir();
+    let candidates = [
+        home.join(".local/bin/ollama"),
+        home.join(".nix-profile/bin/ollama"),
+        PathBuf::from("/usr/local/bin/ollama"),
+        PathBuf::from("/usr/bin/ollama"),
+        PathBuf::from("/run/current-system/sw/bin/ollama"), // NixOS
+        PathBuf::from("/opt/ollama/bin/ollama"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = crate::startup::real_home_dir();
@@ -336,7 +355,7 @@ impl LocalProvider for DirectGgufProvider {
         // If Ollama is running, try to route through it — it handles CUDA automatically.
         // Derive the Ollama model name from the GGUF filename (same as registration).
         // If Ollama returns 404 (model not yet registered) fall through to llama-server.
-        if which::which("ollama").is_ok() {
+        if let Some(ollama_bin) = find_ollama() {
             let ollama_base = "http://127.0.0.1:11434";
             let health_ok = self.client
                 .get(format!("{}/api/tags", ollama_base))
@@ -369,7 +388,7 @@ impl LocalProvider for DirectGgufProvider {
                     let modelfile = format!("FROM {}\nPARAMETER num_ctx 16384", path_str);
                     let modelfile_path = format!("/tmp/Modelfile-{}", model_name);
                     let _ = tokio::fs::write(&modelfile_path, &modelfile).await;
-                    let _ = tokio::process::Command::new("ollama")
+                    let _ = tokio::process::Command::new(&ollama_bin)
                         .args(["create", &model_name, "-f", &modelfile_path])
                         .output()
                         .await;

@@ -198,9 +198,33 @@ fn detect_memory(sys: &System, cpu: &CpuInfo, _platform: &Platform) -> MemoryInf
 
 // ── NVIDIA detection ──────────────────────────────────────────────────────────
 
+/// Resolve the `nvidia-smi` executable. On WSL2 it lives at
+/// /usr/lib/wsl/lib/nvidia-smi — a directory routinely missing from PATH
+/// (notably inside Nix shells) — so fall back to known absolute locations
+/// before giving up and reporting CPU-only.
+fn nvidia_smi_path() -> Option<std::path::PathBuf> {
+    if let Ok(p) = which::which("nvidia-smi") {
+        return Some(p);
+    }
+    const FALLBACKS: &[&str] = &[
+        "/usr/lib/wsl/lib/nvidia-smi",   // WSL2 GPU driver mount
+        "/usr/bin/nvidia-smi",
+        "/usr/local/bin/nvidia-smi",
+        "/opt/nvidia/bin/nvidia-smi",
+    ];
+    FALLBACKS.iter()
+        .map(std::path::PathBuf::from)
+        .find(|p| p.exists())
+}
+
 fn detect_nvidia() -> Vec<GpuInfo> {
+    // Resolve nvidia-smi (PATH or WSL/absolute fallback); CPU-only if absent.
+    let bin = match nvidia_smi_path() {
+        Some(b) => b,
+        None    => return vec![],
+    };
     // Query nvidia-smi for all GPUs
-    let output = Command::new("nvidia-smi")
+    let output = Command::new(&bin)
         .args([
             "--query-gpu=name,memory.total,memory.free,driver_version,compute_cap",
             "--format=csv,noheader,nounits",
@@ -244,7 +268,7 @@ fn detect_nvidia() -> Vec<GpuInfo> {
 
 fn detect_cuda_version() -> Option<String> {
     // nvidia-smi gives CUDA version in the header
-    let output = Command::new("nvidia-smi").output().ok()?;
+    let output = Command::new(nvidia_smi_path()?).output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     // Look for "CUDA Version: X.Y"
     for line in text.lines() {
